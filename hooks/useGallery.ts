@@ -49,16 +49,31 @@ export const useGallery = create<GalleryState>((set, get) => ({
     try {
       console.log('[Gallery] Fetching gallery...');
       const response = await fetch('/api/gallery');
+      console.log('[Gallery] Response status:', response.status, response.statusText);
 
       if (!response.ok) {
-        throw new Error('Failed to fetch gallery');
+        const errorText = await response.text().catch(() => 'No error details');
+        console.error('[Gallery] Fetch failed:', response.status, errorText);
+        throw new Error(`Failed to fetch gallery: ${response.status} ${response.statusText}`);
       }
 
       const data = await response.json();
       console.log('[Gallery] Fetched', Array.isArray(data) ? data.length : (data.videos?.length || 0), 'videos');
 
       // API returns array directly, not wrapped in { videos: [...] }
-      const videos = Array.isArray(data) ? data : (data.videos || []);
+      const rawVideos = Array.isArray(data) ? data : (data.videos || []);
+      
+      // Map API response to VideoItem format (metadata.iv -> metadataIv)
+      const videos = rawVideos.map((v: any) => ({
+        id: v.id,
+        encryptedThumbnailPath: v.encryptedThumbnailPath,
+        orderIndex: v.orderIndex,
+        createdAt: v.createdAt,
+        encryptedTitle: v.metadata?.encryptedTitle || null,
+        encryptedDescription: v.metadata?.encryptedDescription || null,
+        metadataIv: v.metadata?.iv || null,
+      }));
+      
       set({
         videos,
         isLoading: false,
