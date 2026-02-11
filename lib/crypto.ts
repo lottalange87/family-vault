@@ -1,6 +1,6 @@
 /**
  * Web Crypto API Implementation for Family Vault
- * 
+ *
  * Security specs:
  * - PBKDF2-HMAC-SHA256 with 600,000 iterations (OWASP 2023)
  * - AES-256-GCM for symmetric encryption
@@ -11,6 +11,40 @@
 
 // Constants
 const PBKDF2_ITERATIONS = 600000;
+
+/**
+ * Check if the Web Crypto API is available in the current context
+ * Web Crypto API requires a secure context (HTTPS or localhost)
+ */
+export function isCryptoAvailable(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof crypto !== "undefined" &&
+    typeof crypto.subtle !== "undefined"
+  );
+}
+
+/**
+ * Get an error message explaining why crypto is not available
+ */
+export function getCryptoErrorMessage(): string {
+  if (typeof window === "undefined") {
+    return "Web Crypto API is only available in the browser.";
+  }
+  return (
+    "This application requires a secure browser context. " +
+    "Please use http://localhost:3333 for initial setup, or configure HTTPS."
+  );
+}
+
+/**
+ * Assert that crypto is available, throwing an error if not
+ */
+export function assertCryptoAvailable(): void {
+  if (!isCryptoAvailable()) {
+    throw new Error(getCryptoErrorMessage());
+  }
+}
 const SALT_LENGTH = 32; // 256 bits
 const IV_LENGTH = 12; // 96 bits for GCM
 const KEY_LENGTH = 256; // AES-256
@@ -19,6 +53,7 @@ const KEY_LENGTH = 256; // AES-256
  * Generate a cryptographically secure random salt
  */
 export function generateSalt(): Uint8Array {
+  assertCryptoAvailable();
   return crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
 }
 
@@ -26,6 +61,7 @@ export function generateSalt(): Uint8Array {
  * Generate a cryptographically secure random IV
  */
 export function generateIV(): Uint8Array {
+  assertCryptoAvailable();
   return crypto.getRandomValues(new Uint8Array(IV_LENGTH));
 }
 
@@ -33,6 +69,7 @@ export function generateIV(): Uint8Array {
  * Generate a random file key for encrypting individual files
  */
 export async function generateFileKey(): Promise<CryptoKey> {
+  assertCryptoAvailable();
   return crypto.subtle.generateKey(
     { name: "AES-GCM", length: KEY_LENGTH },
     true, // extractable - we need to wrap it
@@ -50,6 +87,8 @@ export async function deriveMasterKey(
   password: string,
   salt: Uint8Array
 ): Promise<CryptoKey> {
+  assertCryptoAvailable();
+
   // Encode password as UTF-8
   const passwordBuffer = new TextEncoder().encode(password);
 

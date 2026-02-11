@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useVault } from "@/hooks/useVault";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Shield, Eye, EyeOff, KeyRound, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Shield, Eye, EyeOff, KeyRound, AlertTriangle, CheckCircle2, Lock } from "lucide-react";
+import { isCryptoAvailable, getCryptoErrorMessage } from "@/lib/crypto";
 
 export function VaultInit() {
   const [password, setPassword] = useState("");
@@ -13,7 +14,13 @@ export function VaultInit() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [acceptedWarning, setAcceptedWarning] = useState(false);
+  const [cryptoAvailable, setCryptoAvailable] = useState<boolean | null>(null);
   const { initializeVault, isLoading, error, clearError } = useVault();
+
+  // Check crypto availability on mount
+  useEffect(() => {
+    setCryptoAvailable(isCryptoAvailable());
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,6 +57,21 @@ export function VaultInit() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Security Context Warning - Show when crypto is not available */}
+            {cryptoAvailable === false && (
+              <div className="rounded-md bg-red-500/10 border border-red-500/20 p-4">
+                <div className="flex items-start gap-3">
+                  <Lock className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                  <div className="text-sm">
+                    <p className="font-medium text-red-400 mb-1">Secure Connection Required</p>
+                    <p className="text-muted-foreground">
+                      {getCryptoErrorMessage()}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Warning box */}
             <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-4 space-y-3">
               <div className="flex items-start gap-3">
@@ -163,9 +185,9 @@ export function VaultInit() {
             <Button
               type="submit"
               className="w-full"
-              disabled={isLoading || !acceptedWarning || !passwordsMatch || password.length < 12}
+              disabled={isLoading || !acceptedWarning || !passwordsMatch || password.length < 12 || cryptoAvailable === false}
             >
-              {isLoading ? "Initializing..." : "Create Vault"}
+              {isLoading ? "Initializing..." : cryptoAvailable === false ? "Secure Connection Required" : "Create Vault"}
             </Button>
           </form>
         </CardContent>
