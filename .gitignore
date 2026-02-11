@@ -44,3 +44,6 @@ coverage/
 .cache/
 temp/
 tmp/
+
+# SSL private key (keep secure)
+key.pem

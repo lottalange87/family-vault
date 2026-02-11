@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:https": "npm run proxy:ssl & next dev",
+    "proxy:ssl": "local-ssl-proxy --source 3334 --target 3333 --cert cert.pem --key key.pem",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -46,6 +48,7 @@
     "drizzle-kit": "^0.31.9",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "local-ssl-proxy": "^2.0.5",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5"
