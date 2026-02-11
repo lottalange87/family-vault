@@ -2,27 +2,63 @@
 
 A secure, end-to-end encrypted video storage application for your family memories.
 
-## Features
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Node](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)
+![Next.js](https://img.shields.io/badge/Next.js-16-black)
 
-- **End-to-End Encryption**: All videos are encrypted in the browser before upload using AES-256-GCM
-- **Zero-Knowledge**: The server never sees your password or decrypted data
-- **PBKDF2 Key Derivation**: 600,000 iterations for password hashing
-- **Client-Side Thumbnails**: Thumbnails generated and encrypted locally
-- **Chunked Uploads**: Supports large video files with resume capability
-- **Dark Mode UI**: Beautiful, modern interface with Tailwind CSS
-- **Drag & Drop**: Easy video upload with progress tracking
-- **Responsive Design**: Works on desktop and mobile
+## 🚀 Quick Start
 
-## Tech Stack
+Get your vault running in 5 minutes:
 
-- **Frontend**: Next.js 16 + TypeScript + Tailwind CSS + shadcn/ui
-- **State Management**: Zustand
-- **Crypto**: Web Crypto API (PBKDF2, AES-256-GCM)
-- **Backend**: Next.js API Routes
-- **Database**: SQLite with Drizzle ORM
-- **Storage**: Local filesystem (encrypted files)
+```bash
+# 1. Clone and install
+git clone <repository-url>
+cd family-vault
+npm install
 
-## Security Model
+# 2. Set up environment
+cp .env.example .env
+mkdir -p data/uploads data/temp
+
+# 3. Set up database
+npm run db:generate
+npm run db:migrate
+
+# 4. Start the app
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) and create your vault!
+
+📖 **[Complete Setup Guide](./SETUP.md)** — Detailed installation instructions  
+✨ **[Feature List](./FEATURES.md)** — What Family Vault can do  
+🏗️ **[Architecture](./ARCHITECTURE.md)** — Technical design and security model
+
+---
+
+## ✨ Key Features
+
+### 🔐 Security First
+- **End-to-End Encryption** — Videos encrypted with AES-256-GCM before leaving your browser
+- **Zero-Knowledge** — Server never sees your password or decrypted data
+- **PBKDF2 Key Derivation** — 600,000 iterations for password hashing (OWASP 2023)
+- **Session-Only Keys** — Master key stored in sessionStorage, cleared on tab close
+
+### 📹 Video Management
+- **Chunked Uploads** — Support for large video files (up to 2GB by default)
+- **Encrypted Thumbnails** — Thumbnails generated and encrypted client-side
+- **Gallery View** — Beautiful masonry grid with lazy decryption
+- **Video Player** — Decrypt and play videos directly in your browser
+
+### 🎨 Modern UI
+- **Dark Mode** — Beautiful dark theme by default
+- **Responsive Design** — Works perfectly on desktop, tablet, and mobile
+- **Drag & Drop** — Easy file upload with visual feedback
+- **Smooth Animations** — Framer Motion powered interactions
+
+---
+
+## 🛡️ Security Model
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -48,51 +84,21 @@ A secure, end-to-end encrypted video storage application for your family memorie
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Setup Instructions
+**The server only stores encrypted blobs.** Your password never leaves your browser. If the server is compromised, your data remains encrypted.
 
-### 1. Install Dependencies
+---
 
-```bash
-npm install
-```
-
-### 2. Set Up Environment Variables
-
-Create a `.env` file in the root directory:
-
-```bash
-# Optional: Custom data directory
-DATABASE_URL=./data/vault.db
-UPLOAD_DIR=./data/uploads
-TEMP_DIR=./data/temp
-MAX_FILE_SIZE=2147483648  # 2GB in bytes
-```
-
-### 3. Run Database Migrations
-
-```bash
-npx drizzle-kit migrate
-```
-
-### 4. Start Development Server
-
-```bash
-npm run dev
-```
-
-The app will be available at `http://localhost:3000`
-
-## Usage
+## 📋 How to Use
 
 ### First Time Setup
 
 1. Open the app in your browser
 2. Create a strong master password (12+ characters recommended)
-3. **Important**: Save your password securely - there is no recovery option!
+3. **Important**: Save your password securely — there is no recovery option!
 
 ### Uploading Videos
 
-1. Click "Upload" in the gallery
+1. Click **"Upload"** in the gallery header
 2. Drag and drop videos or click to select files
 3. Videos are automatically encrypted in your browser
 4. Encrypted data is uploaded to the server
@@ -102,8 +108,8 @@ The app will be available at `http://localhost:3000`
 
 1. Click on any video card to view it
 2. The video is decrypted in your browser
-3. Use arrow keys to navigate between videos
-4. Press ESC to close the viewer
+3. Use **arrow keys** to navigate between videos
+4. Press **ESC** to close the viewer
 
 ### Security Notes
 
@@ -111,89 +117,76 @@ The app will be available at `http://localhost:3000`
 - **Session**: Vault locks when you close the browser tab
 - **Encryption**: AES-256-GCM with unique IV per file
 - **Key Derivation**: PBKDF2 with 600,000 iterations
-- **Password Recovery**: Not possible - keep your password safe!
+- **Password Recovery**: Not possible — keep your password safe!
 
-## Architecture
+---
 
-### Database Schema
+## 🏗️ Tech Stack
 
-```sql
--- Vault configuration (one row per vault)
-vault_config:
-  - id: integer (primary key)
-  - salt: text (Base64-encoded 32-byte salt)
-  - created_at: text
-  - version: integer
+| Layer | Technology |
+|-------|------------|
+| **Frontend** | Next.js 16 + React 19 + TypeScript |
+| **Styling** | Tailwind CSS 4 + shadcn/ui |
+| **State** | Zustand |
+| **Crypto** | Web Crypto API (native browser) |
+| **Backend** | Next.js API Routes |
+| **Database** | SQLite with Drizzle ORM |
+| **Storage** | Local filesystem (encrypted files) |
 
--- Encrypted files
-encrypted_files:
-  - id: text (UUID primary key)
-  - encrypted_filename: text
-  - encrypted_blob_path: text
-  - encrypted_thumbnail_path: text
-  - wrapped_file_key: text (Master key encrypted file key)
-  - iv: text (Base64 IV)
-  - file_size: integer
-  - mime_type: text
-  - order_index: integer
-  - created_at: text
+---
 
--- Encrypted metadata
-encrypted_metadata:
-  - id: text (UUID primary key)
-  - file_id: text (foreign key)
-  - encrypted_title: text
-  - encrypted_description: text
-  - iv: text
-  - updated_at: text
-```
-
-### API Routes
-
-- `GET/POST /api/vault/init` - Check/initialize vault
-- `POST /api/upload/init` - Start chunked upload
-- `POST /api/upload/chunk` - Upload a chunk
-- `POST /api/upload/complete` - Complete upload
-- `GET /api/files/:id` - Get file metadata
-- `GET /api/files/:id/stream` - Stream encrypted file
-- `GET /api/files-metadata?id=` - Get file metadata
-- `PUT /api/files-metadata?id=` - Update metadata
-- `GET /api/gallery` - Get all videos
-- `PUT /api/gallery/reorder` - Reorder videos
-
-### File Storage
-
-```
-data/
-├── vault.db              # SQLite database
-├── uploads/
-│   └── {fileId}/
-│       ├── video.enc     # Encrypted video
-│       └── thumbnail.enc # Encrypted thumbnail
-└── temp/
-    └── {sessionId}/      # Chunked upload temp files
-```
-
-## Development
-
-### Running Tests
+## 🔧 Development
 
 ```bash
-# Type checking
+# Install dependencies
+npm install
+
+# Run development server
+npm run dev
+
+# Run type checking
 npm run type-check
 
-# Linting
+# Run linting
 npm run lint
+
+# Database commands
+npm run db:generate    # Generate migrations
+npm run db:migrate     # Run migrations
+npm run db:studio      # Open Drizzle Studio
+
+# Run tests
+npm run test:crypto    # Test crypto functions
 ```
 
-### Building for Production
+---
 
-```bash
-npm run build
-npm start
+## 📁 Project Structure
+
+```
+family-vault/
+├── app/                    # Next.js app router
+│   ├── api/               # API routes
+│   ├── gallery/           # Gallery page
+│   ├── layout.tsx         # Root layout
+│   └── page.tsx           # Login/landing page
+├── components/            # React components
+│   ├── auth/             # Vault authentication
+│   ├── gallery/          # Video gallery
+│   ├── upload/           # Upload components
+│   └── ui/               # shadcn/ui components
+├── db/                   # Database schema
+├── hooks/                # Zustand stores
+├── lib/                  # Utilities
+│   ├── crypto.ts        # Web Crypto API
+│   ├── session-storage.ts # Secure storage
+│   └── rate-limit.ts    # API rate limiting
+└── data/                # Database + uploads (created at runtime)
 ```
 
-## Security Checklist
+---
+
+## 🔒 Security Checklist
 
 - [x] Client-side encryption before upload
 - [x] PBKDF2 with 600,000 iterations
@@ -206,10 +199,27 @@ npm start
 - [x] File type validation
 - [x] File size limits
 
-## License
+---
 
-MIT License - Use at your own risk. No warranty provided.
-
-## Disclaimer
+## ⚠️ Disclaimer
 
 This is a personal project for secure video storage. While strong encryption is used, no security system is perfect. Always keep backups of important data.
+
+**Never lose your password.** We cannot recover it. Your encrypted data will be permanently inaccessible without your master password.
+
+---
+
+## 📄 License
+
+MIT License — Use at your own risk. No warranty provided.
+
+---
+
+## 🙏 Credits
+
+Built with:
+- [Next.js](https://nextjs.org)
+- [Tailwind CSS](https://tailwindcss.com)
+- [shadcn/ui](https://ui.shadcn.com)
+- [Drizzle ORM](https://orm.drizzle.team)
+- [Zustand](https://github.com/pmndrs/zustand)

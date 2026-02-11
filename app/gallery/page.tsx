@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useVault } from "@/hooks/useVault";
 import { useGallery } from "@/hooks/useGallery";
@@ -17,13 +17,13 @@ import {
   Shield,
 } from "lucide-react";
 import { motion } from "framer-motion";
+import { useState } from "react";
 
 export default function GalleryPage() {
   const router = useRouter();
-  const { isUnlocked, lockVault, salt } = useVault();
+  const { isUnlocked, lockVault } = useVault();
   const {
     videos,
-    decryptedCache,
     isLoading,
     fetchGallery,
     decryptVideo,
@@ -149,8 +149,15 @@ export default function GalleryPage() {
           </div>
 
           <VideoGrid
-            videos={videos}
-            decryptedCache={decryptedCache}
+            videos={videos.map(v => ({
+              id: v.id,
+              encryptedThumbnailPath: v.encryptedThumbnailPath,
+              orderIndex: v.orderIndex,
+              createdAt: v.createdAt,
+              title: v.title,
+              description: v.description,
+              thumbnailUrl: v.thumbnailUrl,
+            }))}
             onDecrypt={decryptVideo}
           />
         </div>

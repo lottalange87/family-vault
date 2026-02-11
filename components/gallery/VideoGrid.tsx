@@ -1,22 +1,30 @@
 "use client";
 
 import { useState } from "react";
-import { GalleryItem, DecryptedVideo } from "@/hooks/useGallery";
 import { VideoCard } from "./VideoCard";
 import { VideoModal } from "./VideoModal";
 import { Lock } from "lucide-react";
 
+interface Video {
+  id: string;
+  encryptedThumbnailPath: string | null;
+  orderIndex: number;
+  createdAt: string;
+  title?: string;
+  description?: string;
+  thumbnailUrl?: string;
+  fileSize?: number | null;
+}
+
 interface VideoGridProps {
-  videos: GalleryItem[];
-  decryptedCache: Map<string, DecryptedVideo>;
-  onDecrypt: (id: string) => Promise<DecryptedVideo | null>;
+  videos: Video[];
+  onDecrypt: (id: string) => Promise<void>;
   onReorder?: (newOrder: string[]) => void;
   isEditMode?: boolean;
 }
 
 export function VideoGrid({
   videos,
-  decryptedCache,
   onDecrypt,
   onReorder,
   isEditMode = false,
@@ -38,10 +46,6 @@ export function VideoGrid({
   }
 
   const selectedVideo = selectedVideoId
-    ? decryptedCache.get(selectedVideoId) || null
-    : null;
-
-  const selectedGalleryItem = selectedVideoId
     ? videos.find((v) => v.id === selectedVideoId) || null
     : null;
 
@@ -52,7 +56,6 @@ export function VideoGrid({
           <VideoCard
             key={video.id}
             video={video}
-            decryptedVideo={decryptedCache.get(video.id)}
             onClick={() => setSelectedVideoId(video.id)}
             onDecrypt={() => onDecrypt(video.id)}
             index={index}
@@ -61,10 +64,9 @@ export function VideoGrid({
         ))}
       </div>
 
-      {selectedVideoId && selectedGalleryItem && (
+      {selectedVideoId && selectedVideo && (
         <VideoModal
           video={selectedVideo}
-          galleryItem={selectedGalleryItem}
           isOpen={!!selectedVideoId}
           onClose={() => setSelectedVideoId(null)}
           onDecrypt={() => onDecrypt(selectedVideoId)}

@@ -1,26 +1,28 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { DecryptedVideo } from "@/hooks/useGallery";
-import { GalleryItem } from "@/hooks/useGallery";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   X,
   ChevronLeft,
   ChevronRight,
   Download,
-  Edit2,
   Lock,
   Loader2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface VideoModalProps {
-  video: DecryptedVideo | null;
-  galleryItem: GalleryItem;
+  video: {
+    id: string;
+    title?: string;
+    description?: string;
+    thumbnailUrl?: string;
+    createdAt: string;
+  } | null;
   isOpen: boolean;
   onClose: () => void;
-  onDecrypt: () => Promise<DecryptedVideo | null>;
+  onDecrypt: () => Promise<void>;
   hasNext: boolean;
   hasPrev: boolean;
   onNext: () => void;
@@ -29,7 +31,6 @@ interface VideoModalProps {
 
 export function VideoModal({
   video,
-  galleryItem,
   isOpen,
   onClose,
   onDecrypt,
@@ -39,15 +40,18 @@ export function VideoModal({
   onPrev,
 }: VideoModalProps) {
   const [isDecrypting, setIsDecrypting] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
 
   // Auto-decrypt when opening if not already decrypted
   useEffect(() => {
-    if (isOpen && !video && !isDecrypting) {
+    if (isOpen && !videoUrl) {
       setIsDecrypting(true);
-      onDecrypt().finally(() => setIsDecrypting(false));
+      onDecrypt().then(() => {
+        setIsDecrypting(false);
+        // Video URL will be set by the parent component after decryption
+      });
     }
-  }, [isOpen, video]);
+  }, [isOpen, videoUrl, onDecrypt]);
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -90,17 +94,6 @@ export function VideoModal({
       month: "long",
       day: "numeric",
     });
-  };
-
-  const handleDownload = () => {
-    if (video?.videoUrl) {
-      const a = document.createElement("a");
-      a.href = video.videoUrl;
-      a.download = `${video.title}.mp4`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }
   };
 
   return (
@@ -166,12 +159,10 @@ export function VideoModal({
                 </div>
               ) : video ? (
                 <video
-                  src={video.videoUrl}
+                  src={videoUrl || undefined}
                   controls
                   autoPlay
                   className="max-w-full max-h-full rounded-lg"
-                  onPlay={() => setIsPlaying(true)}
-                  onPause={() => setIsPlaying(false)}
                 />
               ) : (
                 <div className="flex flex-col items-center text-white">
@@ -188,11 +179,10 @@ export function VideoModal({
                 animate={{ y: 0, opacity: 1 }}
                 className="bg-black/80 backdrop-blur-sm p-4 border-t border-white/10"
               >
-                <div className="max-w-4xl mx-auto flex items-start justify-between gap-4"
-                >
+                <div className="max-w-4xl mx-auto flex items-start justify-between gap-4">
                   <div className="flex-1">
                     <h2 className="text-lg font-semibold text-white mb-1">
-                      {video.title}
+                      {video.title || "Untitled Video"}
                     </h2>
                     {video.description && (
                       <p className="text-sm text-white/70 mb-2">{video.description}</p>
@@ -202,15 +192,22 @@ export function VideoModal({
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-white hover:bg-white/10"
-                      onClick={handleDownload}
-                    >
-                      <Download className="h-4 w-4 mr-2" />
-                      Download
-                    </Button>
+                    {videoUrl && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-white hover:bg-white/10"
+                        onClick={() => {
+                          const a = document.createElement("a");
+                          a.href = videoUrl;
+                          a.download = `${video.title || "video"}.mp4`;
+                          a.click();
+                        }}
+                      >
+                        <Download className="h-4 w-4 mr-2" />
+                        Download
+                      </Button>
+                    )}
                   </div>
                 </div>
               </motion.div>

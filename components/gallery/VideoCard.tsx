@@ -1,22 +1,28 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { GalleryItem, DecryptedVideo } from "@/hooks/useGallery";
+import { useState } from "react";
 import { Lock, Play, Film } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface VideoCardProps {
-  video: GalleryItem;
-  decryptedVideo?: DecryptedVideo;
+  video: {
+    id: string;
+    encryptedThumbnailPath: string | null;
+    orderIndex: number;
+    createdAt: string;
+    title?: string;
+    description?: string;
+    thumbnailUrl?: string;
+    fileSize?: number | null;
+  };
   onClick: () => void;
-  onDecrypt: () => Promise<DecryptedVideo | null>;
+  onDecrypt: () => Promise<void>;
   index: number;
   isEditMode?: boolean;
 }
 
 export function VideoCard({
   video,
-  decryptedVideo,
   onClick,
   onDecrypt,
   index,
@@ -27,7 +33,7 @@ export function VideoCard({
   const [thumbnailError, setThumbnailError] = useState(false);
 
   const handleClick = async () => {
-    if (!decryptedVideo && !isDecrypting) {
+    if (!video.thumbnailUrl && !isDecrypting) {
       setIsDecrypting(true);
       await onDecrypt();
       setIsDecrypting(false);
@@ -46,7 +52,7 @@ export function VideoCard({
   };
 
   // Format file size
-  const formatFileSize = (bytes: number | null) => {
+  const formatFileSize = (bytes: number | null | undefined) => {
     if (!bytes) return "";
     const mb = bytes / (1024 * 1024);
     if (mb < 1) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -66,10 +72,10 @@ export function VideoCard({
     >
       {/* Thumbnail or placeholder */}
       <div className="absolute inset-0 flex items-center justify-center">
-        {decryptedVideo?.thumbnailUrl && !thumbnailError ? (
+        {video.thumbnailUrl && !thumbnailError ? (
           <img
-            src={decryptedVideo.thumbnailUrl}
-            alt={decryptedVideo.title}
+            src={video.thumbnailUrl}
+            alt={video.title || `Video ${index + 1}`}
             className="w-full h-full object-cover"
             onError={() => setThumbnailError(true)}
           />
@@ -98,7 +104,7 @@ export function VideoCard({
         <div className="p-4 rounded-full bg-primary/90 text-primary-foreground shadow-lg">
           {isDecrypting ? (
             <div className="h-6 w-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-          ) : decryptedVideo ? (
+          ) : video.thumbnailUrl ? (
             <Play className="h-6 w-6 fill-current" />
           ) : (
             <Lock className="h-6 w-6" />
@@ -107,7 +113,7 @@ export function VideoCard({
       </div>
 
       {/* Lock indicator when not decrypted */}
-      {!decryptedVideo && !isDecrypting && (
+      {!video.thumbnailUrl && !isDecrypting && (
         <div className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 text-white">
           <Lock className="h-3 w-3" />
         </div>
@@ -116,7 +122,7 @@ export function VideoCard({
       {/* Info overlay */}
       <div className="absolute bottom-0 left-0 right-0 p-3">
         <h3 className="text-sm font-medium text-white truncate">
-          {decryptedVideo?.title || `Video ${index + 1}`}
+          {video.title || `Video ${index + 1}`}
         </h3>
         <div className="flex items-center gap-2 text-xs text-white/70">
           <span>{formatDate(video.createdAt)}</span>
