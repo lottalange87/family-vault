@@ -107,20 +107,36 @@ export const useVault = create<VaultState>()(
       },
 
       unlockVault: async (password: string, salt: string) => {
+        console.log("[Vault] Starting unlock process...");
         set({ isLoading: true, error: null });
         try {
+          if (!salt) {
+            console.error("[Vault] Cannot unlock: salt is missing");
+            throw new Error("Vault salt is missing. Please refresh the page.");
+          }
+          if (!password || password.length < 8) {
+            console.error("[Vault] Cannot unlock: password too short");
+            throw new Error("Password must be at least 8 characters.");
+          }
+
+          console.log("[Vault] Converting salt...");
           // Convert salt from base64 to Uint8Array
           const saltArray = base64ToUint8Array(salt);
 
+          console.log("[Vault] Deriving master key...");
           // Derive master key from password
           const masterKey = await deriveMasterKey(password, saltArray);
 
+          console.log("[Vault] Exporting key...");
           // Save to session
           const keyBuffer = await exportKey(masterKey);
           const keyBase64 = arrayBufferToBase64(keyBuffer);
+          
+          console.log("[Vault] Saving to session storage...");
           saveMasterKeyToSession(keyBase64);
           saveSaltToSession(salt);
 
+          console.log("[Vault] Unlock successful!");
           set({
             isUnlocked: true,
             masterKey,
@@ -128,9 +144,9 @@ export const useVault = create<VaultState>()(
             isLoading: false,
           });
         } catch (error) {
-          console.error("Failed to unlock vault:", error);
+          console.error("[Vault] Failed to unlock vault:", error);
           set({
-            error: "Invalid password",
+            error: error instanceof Error ? error.message : "Invalid password",
             isLoading: false,
           });
         }

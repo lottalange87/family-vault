@@ -15,9 +15,21 @@ export function VaultLogin() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
-    if (password.length >= 8 && salt) {
-      await unlockVault(password, salt);
+    console.log("[VaultLogin] Submit clicked. Password length:", password.length, "Salt present:", !!salt);
+    
+    if (password.length < 8) {
+      console.error("[VaultLogin] Password too short");
+      return;
     }
+    
+    if (!salt) {
+      console.error("[VaultLogin] Salt is missing - cannot unlock");
+      alert("Error: Vault salt is missing. Please refresh the page.");
+      return;
+    }
+    
+    console.log("[VaultLogin] Calling unlockVault...");
+    await unlockVault(password, salt);
   };
 
   const getPasswordStrength = (pwd: string) => {

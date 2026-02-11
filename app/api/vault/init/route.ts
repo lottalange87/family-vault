@@ -85,6 +85,7 @@ export async function GET() {
         vaultId: vault.id.toString(),
         createdAt: vault.createdAt,
         version: vault.version,
+        salt: vault.salt,
       },
       { status: 200 }
     );
