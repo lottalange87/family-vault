@@ -191,6 +191,19 @@ async function processSingleUpload(
   const fileId = crypto.randomUUID();
   const totalChunks = Math.ceil(encrypted.encryptedData.byteLength / CHUNK_SIZE);
 
+  // Encrypt the filename separately for metadata
+  console.log("[Upload] Encrypting filename...", upload.file.name);
+  const { encryptData, generateIV, arrayBufferToBase64 } = await import("@/lib/crypto");
+  const filenameIV = generateIV();
+  const encryptedFilenameBuffer = await encryptData(upload.file.name, vault.masterKey, filenameIV);
+  const encryptedFilenameBase64 = arrayBufferToBase64(encryptedFilenameBuffer);
+  
+  console.log("[Upload] Metadata prepared:", {
+    encryptedFilenameLength: encryptedFilenameBase64.length,
+    wrappedFileKeyLength: encrypted.wrappedFileKey?.byteLength,
+    ivLength: encrypted.iv?.length,
+  });
+
   const initResponse = await fetch("/api/upload/init", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -198,9 +211,10 @@ async function processSingleUpload(
       fileId,
       totalChunks,
       encryptedMetadata: {
-        encryptedFilename: arrayBufferToBase64(encrypted.encryptedData).slice(0, 100),
-        wrappedFileKey: encrypted.wrappedFileKey,
-        iv: encrypted.iv,
+        encryptedFilename: encryptedFilenameBase64,
+        wrappedFileKey: arrayBufferToBase64(encrypted.wrappedFileKey),
+        iv: arrayBufferToBase64(encrypted.iv),
+        filenameIV: arrayBufferToBase64(filenameIV),
         fileSize: upload.file.size,
         mimeType: upload.file.type,
         encryptedThumbnail,
@@ -209,7 +223,9 @@ async function processSingleUpload(
   });
 
   if (!initResponse.ok) {
-    throw new Error("Failed to initialize upload");
+    const errorText = await initResponse.text();
+    console.error("[Upload] Init failed:", initResponse.status, errorText);
+    throw new Error(`Failed to initialize upload: ${initResponse.status} ${errorText}`);
   }
 
   const { sessionId } = await initResponse.json();

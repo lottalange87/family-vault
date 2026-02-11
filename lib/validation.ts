@@ -16,6 +16,7 @@ export const uploadInitSchema = z.object({
     encryptedFilename: z.string().min(1),
     wrappedFileKey: z.string().min(1),
     iv: z.string().min(1),
+    filenameIV: z.string().min(1).optional(), // IV for filename encryption
     fileSize: z.number().int().positive().optional(),
     mimeType: z.string().optional(),
     encryptedThumbnail: z.string().optional(), // Base64 encoded thumbnail
