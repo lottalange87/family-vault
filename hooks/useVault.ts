@@ -168,7 +168,7 @@ export const useVault = create<VaultState>()(
         if (keyBase64 && unlocked) {
           try {
             const keyBuffer = base64ToUint8Array(keyBase64);
-            const masterKey = await importKey(keyBuffer);
+            const masterKey = await importKey(keyBuffer, ["encrypt", "decrypt"]);
             set({
               isUnlocked: true,
               masterKey,
