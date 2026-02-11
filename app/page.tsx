@@ -1,13 +1,44 @@
+"use client";
+
+import { useEffect } from "react";
+import { useVault } from "@/hooks/useVault";
+import { VaultLogin } from "@/components/auth/VaultLogin";
+import { VaultInit } from "@/components/auth/VaultInit";
+import { useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
+
 export default function Home() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4">Family Vault</h1>
-        <p className="text-gray-400 mb-8">End-to-end encrypted video storage</p>
-        <div className="text-sm text-gray-500">
-          <p>API Status: ✅ Backend Ready</p>
-        </div>
+  const { isUnlocked, isInitialized, isLoading, checkInitialization, restoreFromSession } = useVault();
+  const router = useRouter();
+
+  useEffect(() => {
+    // Check if vault is initialized on mount
+    checkInitialization();
+    // Try to restore session
+    restoreFromSession();
+  }, [checkInitialization, restoreFromSession]);
+
+  useEffect(() => {
+    // Redirect to gallery if unlocked
+    if (isUnlocked) {
+      router.push("/gallery");
+    }
+  }, [isUnlocked, router]);
+
+  // Show loading state
+  if (isLoading || isInitialized === null) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
-    </div>
-  );
+    );
+  }
+
+  // Show init screen if vault not initialized
+  if (isInitialized === false) {
+    return <VaultInit />;
+  }
+
+  // Show login screen if vault is initialized but not unlocked
+  return <VaultLogin />;
 }

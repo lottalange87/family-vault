@@ -1,0 +1,140 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { GalleryItem, DecryptedVideo } from "@/hooks/useGallery";
+import { Lock, Play, Film } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+interface VideoCardProps {
+  video: GalleryItem;
+  decryptedVideo?: DecryptedVideo;
+  onClick: () => void;
+  onDecrypt: () => Promise<DecryptedVideo | null>;
+  index: number;
+  isEditMode?: boolean;
+}
+
+export function VideoCard({
+  video,
+  decryptedVideo,
+  onClick,
+  onDecrypt,
+  index,
+  isEditMode,
+}: VideoCardProps) {
+  const [isHovered, setIsHovered] = useState(false);
+  const [isDecrypting, setIsDecrypting] = useState(false);
+  const [thumbnailError, setThumbnailError] = useState(false);
+
+  const handleClick = async () => {
+    if (!decryptedVideo && !isDecrypting) {
+      setIsDecrypting(true);
+      await onDecrypt();
+      setIsDecrypting(false);
+    }
+    onClick();
+  };
+
+  // Format date
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  };
+
+  // Format file size
+  const formatFileSize = (bytes: number | null) => {
+    if (!bytes) return "";
+    const mb = bytes / (1024 * 1024);
+    if (mb < 1) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${mb.toFixed(1)} MB`;
+  };
+
+  return (
+    <div
+      className={cn(
+        "group relative aspect-video rounded-xl overflow-hidden bg-muted cursor-pointer transition-all duration-300",
+        "hover:ring-2 hover:ring-primary hover:scale-[1.02]",
+        isEditMode && "ring-2 ring-primary/50"
+      )}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onClick={handleClick}
+    >
+      {/* Thumbnail or placeholder */}
+      <div className="absolute inset-0 flex items-center justify-center">
+        {decryptedVideo?.thumbnailUrl && !thumbnailError ? (
+          <img
+            src={decryptedVideo.thumbnailUrl}
+            alt={decryptedVideo.title}
+            className="w-full h-full object-cover"
+            onError={() => setThumbnailError(true)}
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center text-muted-foreground">
+            <Film className="h-12 w-12 mb-2 opacity-50" />
+          </div>
+        )}
+      </div>
+
+      {/* Overlay gradient */}
+      <div
+        className={cn(
+          "absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent transition-opacity duration-300",
+          isHovered ? "opacity-100" : "opacity-60"
+        )}
+      />
+
+      {/* Play button */}
+      <div
+        className={cn(
+          "absolute inset-0 flex items-center justify-center transition-all duration-300",
+          isHovered ? "opacity-100 scale-100" : "opacity-0 scale-90"
+        )}
+      >
+        <div className="p-4 rounded-full bg-primary/90 text-primary-foreground shadow-lg">
+          {isDecrypting ? (
+            <div className="h-6 w-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          ) : decryptedVideo ? (
+            <Play className="h-6 w-6 fill-current" />
+          ) : (
+            <Lock className="h-6 w-6" />
+          )}
+        </div>
+      </div>
+
+      {/* Lock indicator when not decrypted */}
+      {!decryptedVideo && !isDecrypting && (
+        <div className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 text-white">
+          <Lock className="h-3 w-3" />
+        </div>
+      )}
+
+      {/* Info overlay */}
+      <div className="absolute bottom-0 left-0 right-0 p-3">
+        <h3 className="text-sm font-medium text-white truncate">
+          {decryptedVideo?.title || `Video ${index + 1}`}
+        </h3>
+        <div className="flex items-center gap-2 text-xs text-white/70">
+          <span>{formatDate(video.createdAt)}</span>
+          {video.fileSize && (
+            <>
+              <span>•</span>
+              <span>{formatFileSize(video.fileSize)}</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Order number in edit mode */}
+      {isEditMode && (
+        <div className="absolute top-2 left-2 px-2 py-1 rounded-md bg-primary text-primary-foreground text-xs font-medium">
+          {index + 1}
+        </div>
+      )}
+    </div>
+  );
+}
