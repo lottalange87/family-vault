@@ -29,7 +29,7 @@ export default function GalleryPage() {
     decryptVideo,
     clearCache,
   } = useGallery();
-  const { uploads, isProcessing } = useUpload();
+  const { uploads, isProcessing, lastCompletedAt, resetLastCompleted } = useUpload();
   const [showUpload, setShowUpload] = useState(false);
 
   // Protect route
@@ -46,13 +46,15 @@ export default function GalleryPage() {
     }
   }, [isUnlocked, fetchGallery]);
 
-  // Refresh gallery when uploads complete
+  // Refresh gallery when uploads complete (only when lastCompletedAt changes)
   useEffect(() => {
-    const hasCompletedUploads = uploads.some((u) => u.status === "completed");
-    if (hasCompletedUploads) {
+    if (lastCompletedAt) {
+      console.log("[Gallery] Upload completed, refreshing gallery...");
       fetchGallery();
+      // Reset the trigger
+      resetLastCompleted();
     }
-  }, [uploads, fetchGallery]);
+  }, [lastCompletedAt, fetchGallery, resetLastCompleted]);
 
   // Clean up on unmount
   useEffect(() => {
@@ -60,6 +62,28 @@ export default function GalleryPage() {
       clearCache();
     };
   }, [clearCache]);
+
+  // Auto-close upload panel when all uploads complete (after delay)
+  useEffect(() => {
+    if (!showUpload || uploads.length === 0) return;
+
+    const allCompleted = uploads.every(
+      (u) => u.status === "completed" || u.status === "error"
+    );
+
+    if (allCompleted) {
+      console.log("[Gallery] All uploads completed, auto-closing upload panel...");
+      const timer = setTimeout(() => {
+        setShowUpload(false);
+        // Clear completed uploads after panel closes
+        setTimeout(() => {
+          useUpload.getState().clearCompleted();
+        }, 300);
+      }, 2000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [uploads, showUpload]);
 
   const handleLockVault = () => {
     lockVault();

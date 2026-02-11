@@ -18,6 +18,7 @@ export interface UploadItem {
 interface UploadState {
   uploads: UploadItem[];
   isProcessing: boolean;
+  lastCompletedAt: number | null;
 
   // Actions
   addUploads: (files: File[]) => void;
@@ -25,6 +26,7 @@ interface UploadState {
   processUploads: () => Promise<void>;
   cancelUpload: (id: string) => void;
   clearCompleted: () => void;
+  resetLastCompleted: () => void;
 }
 
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
@@ -32,6 +34,7 @@ const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
 export const useUpload = create<UploadState>()((set, get) => ({
   uploads: [],
   isProcessing: false,
+  lastCompletedAt: null,
 
   addUploads: (files: File[]) => {
     const newUploads: UploadItem[] = files.map((file) => ({
@@ -109,7 +112,12 @@ export const useUpload = create<UploadState>()((set, get) => ({
       uploads: state.uploads.filter(
         (u) => u.status !== "completed" && u.status !== "error"
       ),
+      lastCompletedAt: null,
     }));
+  },
+
+  resetLastCompleted: () => {
+    set({ lastCompletedAt: null });
   },
 }));
 
@@ -268,6 +276,9 @@ async function processSingleUpload(
   }
 
   updateUploadStatus(set, upload.id, { status: "completed", progress: 100 });
+  
+  // Signal that an upload completed (for gallery refresh)
+  set((state) => ({ lastCompletedAt: Date.now() }));
 }
 
 // Generate thumbnail from video file using canvas

@@ -47,6 +47,7 @@ export const useGallery = create<GalleryState>((set, get) => ({
     set({ isLoading: true, error: null });
 
     try {
+      console.log('[Gallery] Fetching gallery...');
       const response = await fetch('/api/gallery');
 
       if (!response.ok) {
@@ -54,12 +55,16 @@ export const useGallery = create<GalleryState>((set, get) => ({
       }
 
       const data = await response.json();
+      console.log('[Gallery] Fetched', Array.isArray(data) ? data.length : (data.videos?.length || 0), 'videos');
 
+      // API returns array directly, not wrapped in { videos: [...] }
+      const videos = Array.isArray(data) ? data : (data.videos || []);
       set({
-        videos: data.videos || [],
+        videos,
         isLoading: false,
       });
     } catch (error) {
+      console.error('[Gallery] Fetch error:', error);
       set({
         error: error instanceof Error ? error.message : 'Unknown error',
         isLoading: false,
