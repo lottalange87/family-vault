@@ -145,18 +145,45 @@ async function processSingleUpload(
   try {
     const thumbnailBlob = await generateThumbnail(upload.file);
     if (thumbnailBlob) {
+      console.log("[Upload] Thumbnail generated, encrypting...");
       const thumbBuffer = await thumbnailBlob.arrayBuffer();
       const thumbEncrypted = await encryptFile(thumbBuffer, vault.masterKey);
-      encryptedThumbnail = arrayBufferToBase64(thumbEncrypted.encryptedData);
+      if (!thumbEncrypted?.encryptedData) {
+        console.warn("[Upload] Thumbnail encryption returned invalid data");
+      } else {
+        encryptedThumbnail = arrayBufferToBase64(thumbEncrypted.encryptedData);
+        console.log("[Upload] Thumbnail encrypted successfully");
+      }
     }
   } catch (e) {
-    console.warn("Failed to generate thumbnail:", e);
+    console.warn("[Upload] Failed to generate thumbnail:", e);
   }
 
   // Step 2: Encrypt file
   updateUploadStatus(set, upload.id, { progress: 15 });
+  console.log("[Upload] Starting file encryption...", upload.file.name);
   const fileBuffer = await upload.file.arrayBuffer();
-  const encrypted = await encryptFile(fileBuffer, vault.masterKey);
+  console.log("[Upload] File buffer loaded, size:", fileBuffer.byteLength);
+  
+  let encrypted;
+  try {
+    encrypted = await encryptFile(fileBuffer, vault.masterKey);
+    console.log("[Upload] Encryption result:", {
+      hasEncryptedData: !!encrypted?.encryptedData,
+      encryptedDataType: typeof encrypted?.encryptedData,
+      encryptedDataByteLength: encrypted?.encryptedData?.byteLength,
+      hasWrappedFileKey: !!encrypted?.wrappedFileKey,
+      hasIv: !!encrypted?.iv,
+    });
+  } catch (encryptError) {
+    console.error("[Upload] Encryption failed:", encryptError);
+    throw new Error(`Encryption failed: ${encryptError instanceof Error ? encryptError.message : "Unknown error"}`);
+  }
+  
+  if (!encrypted || !encrypted.encryptedData) {
+    console.error("[Upload] encryptFile returned invalid result:", encrypted);
+    throw new Error("Encryption returned invalid data structure");
+  }
 
   updateUploadStatus(set, upload.id, { progress: 30, status: "uploading" });
 

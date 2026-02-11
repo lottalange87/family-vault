@@ -265,7 +265,7 @@ export async function encryptFile(
   combined.set(keyWrapIV, wrappedFileKey.byteLength);
   combined.set(fileIV, wrappedFileKey.byteLength + IV_LENGTH);
 
-  return { encryptedBlob, wrappedFileKey: combined, iv: fileIV };
+  return { encryptedData: encryptedBlob, wrappedFileKey: combined, iv: fileIV };
 }
 
 /**
