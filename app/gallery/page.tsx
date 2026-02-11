@@ -78,21 +78,35 @@ export default function GalleryPage() {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-md">
-        <div className="flex items-center justify-between h-16 px-4 md:px-6">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-primary/10">
-              <Shield className="h-5 w-5 text-primary" />
+        <div className="flex items-center justify-between h-16 px-4 md:px-6 gap-2">
+          {/* Logo and Title */}
+          <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-shrink">
+            <div className="p-1.5 md:p-2 rounded-lg bg-primary/10 flex-shrink-0">
+              <Shield className="h-4 w-4 md:h-5 md:w-5 text-primary" />
             </div>
-            <div>
-              <h1 className="font-semibold text-lg">Family Vault</h1>
-              <p className="text-xs text-muted-foreground">End-to-end encrypted storage</p>
+            <div className="min-w-0">
+              <h1 className="font-semibold text-base md:text-lg truncate">Family Vault</h1>
+              <p className="text-[10px] md:text-xs text-muted-foreground truncate">End-to-end encrypted storage</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Action Buttons - Icon only on mobile */}
+          <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="md:hidden h-9 w-9"
+              onClick={() => fetchGallery()}
+              disabled={isLoading}
+              title="Refresh"
+            >
+              <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+            </Button>
+
             <Button
               variant="ghost"
               size="sm"
+              className="hidden md:flex"
               onClick={() => fetchGallery()}
               disabled={isLoading}
             >
@@ -102,7 +116,18 @@ export default function GalleryPage() {
 
             <Button
               variant="ghost"
+              size="icon"
+              className="md:hidden h-9 w-9"
+              onClick={() => setShowUpload(!showUpload)}
+              title={showUpload ? "Hide Upload" : "Upload"}
+            >
+              <Upload className="h-4 w-4" />
+            </Button>
+
+            <Button
+              variant="ghost"
               size="sm"
+              className="hidden md:flex"
               onClick={() => setShowUpload(!showUpload)}
             >
               <Upload className="h-4 w-4 mr-2" />
@@ -111,7 +136,18 @@ export default function GalleryPage() {
 
             <Button
               variant="ghost"
+              size="icon"
+              className="md:hidden h-9 w-9"
+              onClick={handleLockVault}
+              title="Lock Vault"
+            >
+              <LogOut className="h-4 w-4" />
+            </Button>
+
+            <Button
+              variant="ghost"
               size="sm"
+              className="hidden md:flex"
               onClick={handleLockVault}
             >
               <LogOut className="h-4 w-4 mr-2" />
