@@ -1,4 +1,4 @@
-import { mkdir, writeFile, readFile, readdir, stat, unlink, rmdir } from "fs/promises";
+import { mkdir, writeFile, readFile, readdir, stat, unlink, rmdir, rename } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
 
@@ -18,6 +18,11 @@ export async function ensureDirectories(): Promise<void> {
 // Get file path for encrypted blob
 export function getBlobPath(fileId: string): string {
   return join(UPLOAD_DIR, fileId, "video.enc");
+}
+
+// Get file path for encrypted chunk
+export function getChunkPath(fileId: string, chunkIndex: number): string {
+  return join(UPLOAD_DIR, fileId, "chunks", `chunk-${chunkIndex}.enc`);
 }
 
 // Get file path for encrypted thumbnail
@@ -41,6 +46,35 @@ export async function saveEncryptedBlob(
   const path = join(dir, "video.enc");
   await writeFile(path, data);
   return path;
+}
+
+// Move chunks from temp to permanent storage (for streaming)
+export async function moveChunksToStorage(
+  sessionId: string,
+  fileId: string,
+  totalChunks: number
+): Promise<string[]> {
+  const tempDir = getTempDir(sessionId);
+  const chunksDir = join(UPLOAD_DIR, fileId, "chunks");
+  await mkdir(chunksDir, { recursive: true });
+  
+  const chunkPaths: string[] = [];
+  
+  for (let i = 0; i < totalChunks; i++) {
+    const tempPath = join(tempDir, `chunk-${i}`);
+    const destPath = join(chunksDir, `chunk-${i}.enc`);
+    
+    await rename(tempPath, destPath);
+    chunkPaths.push(destPath);
+  }
+  
+  return chunkPaths;
+}
+
+// Read a specific chunk
+export async function readChunk(fileId: string, chunkIndex: number): Promise<Buffer> {
+  const path = getChunkPath(fileId, chunkIndex);
+  return readFile(path);
 }
 
 // Save encrypted thumbnail to disk
@@ -82,7 +116,7 @@ export async function saveChunk(
   return path;
 }
 
-// Read and combine all chunks
+// Read and combine all chunks (legacy - for non-streaming files)
 export async function combineChunks(
   sessionId: string,
   totalChunks: number

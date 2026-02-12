@@ -49,12 +49,25 @@ export const uploadSessions = sqliteTable("upload_sessions", {
   expiresAt: text("expires_at").notNull(),
 });
 
+// Encrypted chunks for streaming
+export const encryptedChunks = sqliteTable("encrypted_chunks", {
+  id: text("id").primaryKey(),
+  fileId: text("file_id")
+    .notNull()
+    .references(() => encryptedFiles.id, { onDelete: "cascade" }),
+  chunkIndex: integer("chunk_index").notNull(),
+  chunkPath: text("chunk_path").notNull(),
+  chunkSize: integer("chunk_size").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 // Relations
-export const encryptedFilesRelations = relations(encryptedFiles, ({ one }) => ({
+export const encryptedFilesRelations = relations(encryptedFiles, ({ one, many }) => ({
   metadata: one(encryptedMetadata, {
     fields: [encryptedFiles.id],
     references: [encryptedMetadata.fileId],
   }),
+  chunks: many(encryptedChunks),
 }));
 
 export const encryptedMetadataRelations = relations(encryptedMetadata, ({ one }) => ({
@@ -69,8 +82,10 @@ export type VaultConfig = typeof vaultConfig.$inferSelect;
 export type EncryptedFile = typeof encryptedFiles.$inferSelect;
 export type EncryptedMetadata = typeof encryptedMetadata.$inferSelect;
 export type UploadSession = typeof uploadSessions.$inferSelect;
+export type EncryptedChunk = typeof encryptedChunks.$inferSelect;
 
 export type NewVaultConfig = typeof vaultConfig.$inferInsert;
 export type NewEncryptedFile = typeof encryptedFiles.$inferInsert;
 export type NewEncryptedMetadata = typeof encryptedMetadata.$inferInsert;
 export type NewUploadSession = typeof uploadSessions.$inferInsert;
+export type NewEncryptedChunk = typeof encryptedChunks.$inferInsert;

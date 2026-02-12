@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { uploadSessions, encryptedFiles, encryptedMetadata } from "@/db/schema";
+import { uploadSessions, encryptedFiles, encryptedMetadata, encryptedChunks } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { uploadCompleteSchema } from "@/lib/validation";
 import { 
-  combineChunks, 
-  saveEncryptedBlob, 
+  moveChunksToStorage, 
   saveEncryptedThumbnail,
-  cleanupTempDir 
+  cleanupTempDir,
+  getChunkPath
 } from "@/lib/storage";
 
 // POST /api/upload/complete - Complete chunked upload
@@ -62,14 +62,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Combine chunks
-    const combinedData = await combineChunks(sessionId, session.totalChunks);
-
     // Parse encrypted metadata
     const encryptedMeta = JSON.parse(session.encryptedMetadata || "{}");
 
-    // Save encrypted blob
-    const blobPath = await saveEncryptedBlob(session.fileId, combinedData);
+    // Move chunks from temp to permanent storage (for streaming)
+    const chunkPaths = await moveChunksToStorage(sessionId, session.fileId, session.totalChunks);
+
+    // Save chunk records to database
+    const now = new Date().toISOString();
+    for (let i = 0; i < chunkPaths.length; i++) {
+      await db.insert(encryptedChunks).values({
+        id: crypto.randomUUID(),
+        fileId: session.fileId,
+        chunkIndex: i,
+        chunkPath: chunkPaths[i],
+        chunkSize: chunkPaths[i].length, // This should be actual file size
+        createdAt: now,
+      });
+    }
 
     // Save encrypted thumbnail if present
     let thumbnailPath: string | undefined;
@@ -84,24 +94,26 @@ export async function POST(request: NextRequest) {
     });
     const orderIndex = (lastFile?.orderIndex || 0) + 1;
 
+    // Calculate total file size from chunks
+    const totalFileSize = encryptedMeta.fileSize || (session.totalChunks * 5 * 1024 * 1024); // Fallback estimate
+
     // Create file record
-    const now = new Date().toISOString();
     await db.insert(encryptedFiles).values({
       id: session.fileId,
       encryptedFilename: encryptedMeta.encryptedFilename,
-      encryptedBlobPath: blobPath,
+      encryptedBlobPath: "chunked", // Mark as chunked storage
       encryptedThumbnailPath: thumbnailPath,
       wrappedFileKey: encryptedMeta.wrappedFileKey,
       iv: encryptedMeta.iv,
-      filenameIv: encryptedMeta.filenameIv, // Store separate filename IV
-      thumbnailIv: encryptedMeta.thumbnailIv, // Store separate thumbnail IV
-      fileSize: encryptedMeta.fileSize || combinedData.length,
+      filenameIv: encryptedMeta.filenameIv,
+      thumbnailIv: encryptedMeta.thumbnailIv,
+      fileSize: totalFileSize,
       mimeType: encryptedMeta.mimeType || "video/mp4",
       orderIndex,
       createdAt: now,
     });
 
-    // Create metadata record - use a separate metadata IV (or filename IV as fallback)
+    // Create metadata record
     await db.insert(encryptedMetadata).values({
       id: crypto.randomUUID(),
       fileId: session.fileId,
@@ -120,7 +132,8 @@ export async function POST(request: NextRequest) {
         success: true,
         fileId: session.fileId,
         status: "completed",
-        fileSize: combinedData.length,
+        fileSize: totalFileSize,
+        chunks: session.totalChunks,
         createdAt: now,
       },
       { status: 200 }
