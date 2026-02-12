@@ -113,6 +113,7 @@ export const useGallery = create<GalleryState>((set, get) => ({
   },
 
   decryptVideo: async (id: string) => {
+    console.log('[Gallery] decryptVideo called for', id);
     const { decryptThumbnail, decryptVideoMetadata, decryptingVideos } = get();
     
     // Prevent duplicate decryption attempts
@@ -127,10 +128,12 @@ export const useGallery = create<GalleryState>((set, get) => ({
     }));
 
     try {
+      console.log('[Gallery] Starting thumbnail and metadata decryption...');
       const [thumbnailUrl, metadata] = await Promise.all([
         decryptThumbnail(id),
         decryptVideoMetadata(id),
       ]);
+      console.log('[Gallery] Decryption complete. thumbnailUrl:', thumbnailUrl, 'metadata:', metadata);
 
       set((state) => ({
         videos: state.videos.map((v) =>

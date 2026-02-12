@@ -35,9 +35,15 @@ export function VideoCard({
   const [thumbnailError, setThumbnailError] = useState(false);
 
   const handleClick = async () => {
+    console.log('[VideoCard] Clicked, thumbnailUrl:', video.thumbnailUrl, 'isDecrypting:', isDecrypting);
     if (!video.thumbnailUrl && !isDecrypting) {
+      console.log('[VideoCard] Starting decryption...');
       setIsDecrypting(true);
-      await onDecrypt();
+      try {
+        await onDecrypt();
+      } catch (e) {
+        console.error('[VideoCard] Decryption failed:', e);
+      }
       setIsDecrypting(false);
     }
     onClick();
