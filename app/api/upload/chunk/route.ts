@@ -6,14 +6,8 @@ import { isValidChunkSize, getMaxChunkSize } from "@/lib/validation";
 import { checkChunkRateLimit, createRateLimitHeaders } from "@/lib/rate-limit";
 import { saveChunk } from "@/lib/storage";
 
-// Increase body size limit for encrypted chunks
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '15mb',
-    },
-  },
-};
+// Increase body size limit for encrypted chunks (10MB data + 16 bytes auth tag)
+export const dynamic = 'force-dynamic';
 
 // POST /api/upload/chunk - Upload a chunk
 export async function POST(request: NextRequest) {
@@ -33,13 +27,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse form data
-    const formData = await request.formData();
+    // Parse form data - read raw body first to avoid bodyParser limits
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch (e) {
+      console.error("Failed to parse form data:", e);
+      return NextResponse.json(
+        { error: "Failed to parse form data - chunk may be too large" },
+        { status: 413 }
+      );
+    }
+    
     const sessionId = formData.get("sessionId") as string;
     const chunkIndexStr = formData.get("chunkIndex") as string;
     const chunk = formData.get("chunk") as Blob;
 
-    // Validate required fields
     if (!sessionId || !chunkIndexStr || !chunk) {
       return NextResponse.json(
         { error: "Missing required fields: sessionId, chunkIndex, chunk" },
@@ -55,18 +58,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate chunk size
-    if (!isValidChunkSize(chunk.size)) {
+    // Validate chunk size (allow up to 12MB for encrypted data + overhead)
+    if (chunk.size > 12 * 1024 * 1024) {
       return NextResponse.json(
-        { 
-          error: `Chunk too large. Max size: ${getMaxChunkSize() / 1024 / 1024}MB`,
-          maxSize: getMaxChunkSize(),
-        },
+        { error: `Chunk too large. Max size: 12MB`, size: chunk.size },
         { status: 400 }
       );
     }
 
-    // Get session
     const session = await db.query.uploadSessions.findFirst({
       where: eq(uploadSessions.id, sessionId),
     });
@@ -78,7 +77,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if session expired
     if (new Date() > new Date(session.expiresAt)) {
       return NextResponse.json(
         { error: "Upload session expired" },
@@ -86,7 +84,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate chunk index
     if (chunkIndex >= session.totalChunks) {
       return NextResponse.json(
         { error: "Chunk index out of range" },
@@ -99,7 +96,6 @@ export async function POST(request: NextRequest) {
     await saveChunk(sessionId, chunkIndex, chunkBuffer);
 
     // Update chunks received count
-    // Note: This is a simple increment, could be more sophisticated
     const updatedSession = await db
       .update(uploadSessions)
       .set({ 

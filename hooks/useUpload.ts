@@ -28,7 +28,7 @@ interface UploadState {
   resetLastCompleted: () => void;
 }
 
-const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks for streaming
+const CHUNK_SIZE = 9 * 1024 * 1024; // 9MB chunks (fits in 10MB limit with GCM overhead)
 
 export const useUpload = create<UploadState>()((set, get) => ({
   uploads: [],
