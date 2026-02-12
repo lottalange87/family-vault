@@ -282,10 +282,26 @@ export function VideoModal({
     console.log('[VideoModal] All chunks loaded');
   };
 
-  // Initialize on open
+  // Initialize on open - using ref to avoid dependency loop
+  const hasInitializedRef = useRef(false);
+  
   useEffect(() => {
-    if (isOpen && video?.id && masterKey) {
+    // Reset initialization when modal closes
+    if (!isOpen) {
+      hasInitializedRef.current = false;
+      cleanup();
+      return;
+    }
+    
+    // Only initialize once per open
+    if (hasInitializedRef.current) {
+      console.log('[VideoModal] Already initialized, skipping');
+      return;
+    }
+    
+    if (video?.id && masterKey) {
       console.log('[VideoModal] Opening video', video.id);
+      hasInitializedRef.current = true;
       setIsLoading(true);
       setIsDecryptingMetadata(true);
       
@@ -301,11 +317,7 @@ export function VideoModal({
         setIsLoading(false);
       });
     }
-
-    return () => {
-      cleanup();
-    };
-  }, [isOpen, video?.id, masterKey, onDecrypt, loadVideo, cleanup]);
+  }, [isOpen, video?.id, masterKey]); // Removed onDecrypt, loadVideo, cleanup from deps
 
   // Handle keyboard navigation
   useEffect(() => {
