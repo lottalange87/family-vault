@@ -308,18 +308,43 @@ async function processSingleUpload(
     updateUploadStatus(set, upload.id, { progress });
   }
 
-  // Complete upload
-  const completeResponse = await fetch("/api/upload/complete", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionId }),
-  });
+  // Complete upload with retry
+  let completeRetries = 0;
+  let completeSuccess = false;
+  
+  while (completeRetries < 3 && !completeSuccess) {
+    try {
+      console.log(`[Upload v2] Completing upload (attempt ${completeRetries + 1})...`);
+      const completeResponse = await fetch("/api/upload/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
 
-  if (!completeResponse.ok) {
-    throw new Error("Complete failed");
+      if (completeResponse.ok) {
+        completeSuccess = true;
+        console.log("[Upload v2] Upload complete:", fileId);
+      } else {
+        const errorText = await completeResponse.text();
+        console.error(`[Upload v2] Complete failed: ${completeResponse.status} ${errorText}`);
+        completeRetries++;
+        if (completeRetries < 3) {
+          await new Promise(r => setTimeout(r, 1000 * completeRetries));
+        }
+      }
+    } catch (e) {
+      console.error("[Upload v2] Complete error:", e);
+      completeRetries++;
+      if (completeRetries < 3) {
+        await new Promise(r => setTimeout(r, 1000 * completeRetries));
+      }
+    }
+  }
+  
+  if (!completeSuccess) {
+    throw new Error("Complete failed after retries");
   }
 
   updateUploadStatus(set, upload.id, { status: "completed", progress: 100 });
   set({ lastCompletedAt: Date.now() });
-  console.log("[Upload v2] Upload complete:", fileId);
 }
