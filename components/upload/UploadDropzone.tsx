@@ -175,7 +175,15 @@ export function UploadDropzone() {
                   </div>
                 </div>
 
-                <Progress value={upload.progress} />
+                <div className="space-y-1">
+                  <Progress value={upload.progress} />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>{upload.progress}%</span>
+                    {upload.uploadSpeed && upload.uploadSpeed > 0 && (
+                      <span>{upload.uploadSpeed.toFixed(2)} MB/s</span>
+                    )}
+                  </div>
+                </div>
 
                 {upload.error && (
                   <p className="text-xs text-red-500">{upload.error}</p>

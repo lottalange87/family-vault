@@ -13,6 +13,9 @@ export interface UploadItem {
   status: "pending" | "encrypting" | "uploading" | "completed" | "error";
   error?: string;
   abortController?: AbortController;
+  uploadSpeed?: number; // MB/s
+  uploadedBytes?: number;
+  startTime?: number;
 }
 
 interface UploadState {
@@ -44,6 +47,9 @@ export const useUpload = create<UploadState>()((set, get) => ({
       progress: 0,
       status: "pending",
       abortController: new AbortController(),
+      uploadSpeed: 0,
+      uploadedBytes: 0,
+      startTime: Date.now(),
     }));
 
     set((state) => ({
@@ -295,18 +301,29 @@ async function processSingleUpload(
     formData.append("chunkIndex", i.toString());
     formData.append("chunk", new Blob([encryptedWithTag]));
 
+    const chunkStartTime = Date.now();
     const chunkResponse = await fetch("/api/upload/chunk", {
       method: "POST",
       body: formData,
       signal: upload.abortController?.signal,
     });
+    const chunkEndTime = Date.now();
 
     if (!chunkResponse.ok) {
       throw new Error(`Chunk ${i} upload failed`);
     }
 
+    // Calculate upload speed
+    const chunkDuration = (chunkEndTime - chunkStartTime) / 1000; // seconds
+    const chunkSpeed = chunkDuration > 0 ? encryptedWithTag.length / chunkDuration / (1024 * 1024) : 0; // MB/s
+    const uploadedSoFar = Math.min((i + 1) * CHUNK_SIZE, fileBuffer.byteLength);
+    
     const progress = 20 + Math.round(((i + 1) / totalChunks) * 70);
-    updateUploadStatus(set, upload.id, { progress });
+    updateUploadStatus(set, upload.id, { 
+      progress, 
+      uploadSpeed: chunkSpeed,
+      uploadedBytes: uploadedSoFar,
+    });
   }
 
   // Complete upload with retry

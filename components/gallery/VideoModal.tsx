@@ -65,6 +65,7 @@ export function VideoModal({
   const chunksQueueRef = useRef<Uint8Array[]>([]);
   const nextChunkIndexRef = useRef(0);
   const isAppendingRef = useRef(false);
+  const hasInitializedRef = useRef(false);
 
   const masterKey = useVault.getState().masterKey;
 
@@ -90,6 +91,7 @@ export function VideoModal({
     chunksQueueRef.current = [];
     nextChunkIndexRef.current = 0;
     isAppendingRef.current = false;
+    hasInitializedRef.current = false;
   }, []);
 
   const fetchAndDecryptChunk = async (chunkIndex: number): Promise<Uint8Array | null> => {
@@ -247,12 +249,34 @@ export function VideoModal({
 
   // Initialize
   useEffect(() => {
-    if (isOpen && video?.id && masterKey) {
-      setIsLoading(true);
-      onDecrypt().then(() => {
-        setupMediaSource(video.id);
-      });
+    if (!isOpen || !video?.id || !masterKey) {
+      // Reset when closing
+      if (!isOpen) {
+        hasInitializedRef.current = false;
+        cleanup();
+      }
+      return;
     }
+    
+    // Prevent double initialization
+    if (hasInitializedRef.current) return;
+    
+    console.log('[VideoModal] Opening video', video.id);
+    hasInitializedRef.current = true;
+    setIsLoading(true);
+    
+    // Small delay to ensure videoRef is populated
+    setTimeout(() => {
+      if (videoRef.current) {
+        onDecrypt().then(() => {
+          setupMediaSource(video.id);
+        });
+      } else {
+        console.error('[VideoModal] Video ref still null after delay');
+        setError("Video player initialization failed");
+        setIsLoading(false);
+      }
+    }, 100);
 
     return () => cleanup();
   }, [isOpen, video?.id, masterKey]);
