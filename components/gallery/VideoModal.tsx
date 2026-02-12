@@ -64,17 +64,18 @@ export function VideoModal({
   const fileKeyRef = useRef<CryptoKey | null>(null);
   const chunksQueueRef = useRef<Uint8Array[]>([]);
   const nextChunkIndexRef = useRef(0);
-  const isAppendingRef = useRef(false);
   const hasInitializedRef = useRef(false);
+  const isEndedRef = useRef(false);
 
   const masterKey = useVault.getState().masterKey;
 
   const cleanup = useCallback(() => {
+    console.log('[VideoModal] Cleanup');
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    if (sourceBufferRef.current && mediaSourceRef.current?.readyState === 'open') {
+    if (sourceBufferRef.current) {
       try {
         sourceBufferRef.current.abort();
       } catch (e) {}
@@ -90,53 +91,57 @@ export function VideoModal({
     manifestRef.current = null;
     chunksQueueRef.current = [];
     nextChunkIndexRef.current = 0;
-    isAppendingRef.current = false;
     hasInitializedRef.current = false;
+    isEndedRef.current = false;
   }, []);
 
   const fetchAndDecryptChunk = async (chunkIndex: number): Promise<Uint8Array | null> => {
     if (!fileKeyRef.current || !manifestRef.current) return null;
-
     try {
       const response = await fetch(`/api/stream/${manifestRef.current.videoId}/chunk/${chunkIndex}`);
       if (!response.ok) return null;
-
       const encryptedData = await response.arrayBuffer();
       const iv = generateChunkIV(chunkIndex);
-      
       const decrypted = await decryptData(encryptedData, fileKeyRef.current, iv);
       return new Uint8Array(decrypted);
     } catch (error) {
-      console.error(`Failed to decrypt chunk ${chunkIndex}:`, error);
+      console.error(`[Stream] Failed to decrypt chunk ${chunkIndex}:`, error);
       return null;
     }
   };
 
   const appendNextChunk = useCallback(async () => {
-    if (isAppendingRef.current || !sourceBufferRef.current || !mediaSourceRef.current) return;
-
     const sourceBuffer = sourceBufferRef.current;
+    const mediaSource = mediaSourceRef.current;
+    
+    if (!sourceBuffer || !mediaSource || mediaSource.readyState !== 'open') {
+      return;
+    }
+    
     if (sourceBuffer.updating) return;
 
     if (chunksQueueRef.current.length > 0) {
-      isAppendingRef.current = true;
       const chunk = chunksQueueRef.current.shift();
-      
       try {
         sourceBuffer.appendBuffer(chunk!);
         setBufferedChunks(prev => prev + 1);
       } catch (e) {
-        console.error("Append buffer failed:", e);
-      } finally {
-        isAppendingRef.current = false;
+        console.error('[Stream] Append buffer failed:', e);
+        chunksQueueRef.current.unshift(chunk!); // Put back
       }
-    } else if (nextChunkIndexRef.current < manifestRef.current?.totalChunks) {
-      // Fetch next chunk
-      const chunkIndex = nextChunkIndexRef.current++;
-      const decrypted = await fetchAndDecryptChunk(chunkIndex);
-      if (decrypted) {
-        chunksQueueRef.current.push(decrypted);
-        appendNextChunk();
+    } else {
+      // Check if all chunks are done
+      const allLoaded = nextChunkIndexRef.current >= (manifestRef.current?.totalChunks || 0);
+      const queueEmpty = chunksQueueRef.current.length === 0;
+      
+      if (allLoaded && queueEmpty && !isEndedRef.current && !sourceBuffer.updating) {
+        try {
+          isEndedRef.current = true;
+          mediaSource.endOfStream();
+          console.log('[Stream] End of stream signaled');
+        } catch (e) {
+          console.error('[Stream] Failed to signal end of stream:', e);
+        }
       }
     }
   }, []);
@@ -152,7 +157,6 @@ export function VideoModal({
     const { signal } = abortControllerRef.current;
 
     try {
-      // 1. Load manifest
       setLoadingText("Loading manifest...");
       const manifestRes = await fetch(`/api/stream/${fileId}/manifest`, { signal });
       if (!manifestRes.ok) throw new Error("Failed to load manifest");
@@ -162,47 +166,39 @@ export function VideoModal({
       setTotalChunksState(manifest.totalChunks);
       console.log("[Stream] Manifest:", manifest);
 
-      // 2. Unwrap file key
       setLoadingText("Preparing decryption...");
       const wrappedKeyData = base64ToUint8Array(manifest.wrappedFileKey);
-      const WRAPPED_KEY_LENGTH = 48;
-      const wrappedKey = wrappedKeyData.slice(0, WRAPPED_KEY_LENGTH);
-      const keyWrapIV = wrappedKeyData.slice(WRAPPED_KEY_LENGTH, WRAPPED_KEY_LENGTH + 12);
+      const wrappedKey = wrappedKeyData.slice(0, 48);
+      const keyWrapIV = wrappedKeyData.slice(48, 60);
       
       fileKeyRef.current = await unwrapFileKey(wrappedKey, masterKey, keyWrapIV);
       console.log("[Stream] File key unwrapped");
 
-      // 3. Create MediaSource
       const mediaSource = new MediaSource();
       mediaSourceRef.current = mediaSource;
 
       const video = videoRef.current;
       if (!video) throw new Error("Video element not found");
-      video.src = URL.createObjectURL(mediaSource);
+      
+      const url = URL.createObjectURL(mediaSource);
+      video.src = url;
 
-      // 4. Wait for MediaSource to open
       await new Promise<void>((resolve, reject) => {
         mediaSource.addEventListener('sourceopen', () => resolve(), { once: true });
         mediaSource.addEventListener('error', reject, { once: true });
       });
 
-      // 5. Add SourceBuffer with proper MIME type
+      // Determine MIME type
       let mimeType = manifest.mimeType || 'video/mp4';
-      
-      // MediaSource requires codecs - try to add them if missing
       if (mimeType === 'video/mp4' || !mimeType.includes('codecs')) {
-        // Try common codec combinations
-        const codecCandidates = [
+        const candidates = [
           'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
           'video/mp4; codecs="avc1.64001F, mp4a.40.2"',
           'video/mp4; codecs="avc1.4D401F"',
-          'video/mp4',
         ];
-        
-        for (const candidate of codecCandidates) {
+        for (const candidate of candidates) {
           if (MediaSource.isTypeSupported(candidate)) {
             mimeType = candidate;
-            console.log('[Stream] Using MIME type:', mimeType);
             break;
           }
         }
@@ -212,36 +208,37 @@ export function VideoModal({
         throw new Error(`MIME type not supported: ${mimeType}`);
       }
       
+      console.log('[Stream] Using MIME:', mimeType);
+      
       const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
       sourceBuffer.mode = 'segments';
       sourceBufferRef.current = sourceBuffer;
 
-      // 6. Load initial chunks
+      // Setup updateend handler
+      sourceBuffer.addEventListener('updateend', () => {
+        appendNextChunk();
+      });
+
+      // Load initial chunks
       setLoadingText("Loading initial segments...");
       const initialCount = Math.min(manifest.initialChunks || 3, manifest.totalChunks);
       
       for (let i = 0; i < initialCount; i++) {
         if (signal.aborted) return;
         const decrypted = await fetchAndDecryptChunk(i);
-        if (decrypted) {
-          chunksQueueRef.current.push(decrypted);
-        }
+        if (decrypted) chunksQueueRef.current.push(decrypted);
       }
       nextChunkIndexRef.current = initialCount;
       console.log(`[Stream] Loaded ${chunksQueueRef.current.length} initial chunks`);
 
-      // 7. Start appending
-      sourceBuffer.addEventListener('updateend', () => {
-        appendNextChunk();
-      });
-
+      // Start appending
       appendNextChunk();
 
-      // 8. Start playback
+      // Start playback
       setIsLoading(false);
       video.play().catch(() => {});
 
-      // 9. Continue loading remaining chunks
+      // Continue loading remaining chunks
       const loadRemaining = async () => {
         while (nextChunkIndexRef.current < manifest.totalChunks && !signal.aborted) {
           const chunkIndex = nextChunkIndexRef.current++;
@@ -250,13 +247,7 @@ export function VideoModal({
             chunksQueueRef.current.push(decrypted);
             appendNextChunk();
           }
-          // Small delay to not overwhelm
-          await new Promise(r => setTimeout(r, 100));
-        }
-        
-        // Signal end of stream when done
-        if (!signal.aborted && mediaSource.readyState === 'open') {
-          mediaSource.endOfStream();
+          await new Promise(r => setTimeout(r, 50));
         }
       };
       
@@ -271,14 +262,12 @@ export function VideoModal({
     }
   }, [masterKey, appendNextChunk]);
 
-  // Initialize when modal opens
+  // Initialize
   useEffect(() => {
     if (!isOpen || !video?.id || !masterKey) {
       if (!isOpen) {
         hasInitializedRef.current = false;
         cleanup();
-        setIsLoading(false);
-        setError(null);
       }
       return;
     }
@@ -289,15 +278,14 @@ export function VideoModal({
     hasInitializedRef.current = true;
     setIsLoading(true);
     
-    onDecrypt().then(() => {
-      // Small delay to ensure DOM is ready
-      setTimeout(() => {
+    setTimeout(() => {
+      onDecrypt().then(() => {
         setupMediaSource(video.id);
-      }, 50);
-    });
+      });
+    }, 50);
 
     return () => cleanup();
-  }, [isOpen, video?.id, masterKey]);
+  }, [isOpen, video?.id, masterKey, onDecrypt, setupMediaSource, cleanup]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -353,31 +341,33 @@ export function VideoModal({
                 className="max-w-full max-h-full rounded-lg" 
                 style={{ display: isLoading || error ? 'none' : 'block' }}
               />
-              {isLoading && (
+              
+              {(isLoading || error) && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
-                  <Loader2 className="h-12 w-12 animate-spin mb-4" />
-                  <p>{loadingText}</p>
-                  {bufferedChunks > 0 && (
-                    <p className="text-sm text-white/50 mt-2">Buffered {bufferedChunks} / {totalChunksState} segments</p>
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="h-12 w-12 animate-spin mb-4" />
+                      <p>{loadingText}</p>
+                      {bufferedChunks > 0 && (
+                        <p className="text-sm text-white/50 mt-2">Buffered {bufferedChunks} / {totalChunksState}</p>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="h-16 w-16 mb-4 text-red-400" />
+                      <p>{error}</p>
+                    </>
                   )}
-                </div>
-              )}
-              {error && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
-                  <Lock className="h-16 w-16 mb-4 text-red-400" />
-                  <p>{error}</p>
                 </div>
               )}
             </div>
 
             {video && (
               <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="bg-black/80 backdrop-blur-sm p-4 border-t border-white/10">
-                <div className="max-w-4xl mx-auto flex justify-between items-center">
-                  <div>
-                    <h2 className="text-lg font-semibold text-white">{video.title || "Untitled"}</h2>
-                    <p className="text-sm text-white/50">{formatDate(video.createdAt)}</p>
-                    <p className="text-xs text-white/30 mt-1">Streamed with per-segment encryption</p>
-                  </div>
+                <div className="max-w-4xl mx-auto">
+                  <h2 className="text-lg font-semibold text-white">{video.title || "Untitled"}</h2>
+                  <p className="text-sm text-white/50">{formatDate(video.createdAt)}</p>
+                  <p className="text-xs text-white/30 mt-1">Streamed with per-segment encryption</p>
                 </div>
               </motion.div>
             )}
