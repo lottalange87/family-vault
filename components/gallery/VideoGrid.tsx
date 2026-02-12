@@ -20,6 +20,7 @@ interface VideoGridProps {
   videos: Video[];
   onDecrypt: (id: string) => Promise<void>;
   onDecryptVideo: (id: string) => Promise<string | undefined>;
+  onDelete?: (id: string) => Promise<void>;
   onReorder?: (newOrder: string[]) => void;
   isEditMode?: boolean;
 }
@@ -28,6 +29,7 @@ export function VideoGrid({
   videos,
   onDecrypt,
   onDecryptVideo,
+  onDelete,
   onReorder,
   isEditMode = false,
 }: VideoGridProps) {
@@ -60,6 +62,7 @@ export function VideoGrid({
             video={video}
             onClick={() => setSelectedVideoId(video.id)}
             onDecrypt={() => onDecrypt(video.id)}
+            onDelete={onDelete ? () => onDelete(video.id) : undefined}
             index={index}
             isEditMode={isEditMode}
           />

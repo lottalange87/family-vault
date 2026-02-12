@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Lock, Play, Film } from "lucide-react";
+import { Lock, Play, Film, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface VideoCardProps {
@@ -17,6 +17,7 @@ interface VideoCardProps {
   };
   onClick: () => void;
   onDecrypt: () => Promise<void>;
+  onDelete?: () => void;
   index: number;
   isEditMode?: boolean;
 }
@@ -25,6 +26,7 @@ export function VideoCard({
   video,
   onClick,
   onDecrypt,
+  onDelete,
   index,
   isEditMode,
 }: VideoCardProps) {
@@ -39,6 +41,13 @@ export function VideoCard({
       setIsDecrypting(false);
     }
     onClick();
+  };
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onDelete && confirm('Are you sure you want to delete this video?')) {
+      onDelete();
+    }
   };
 
   // Format date
@@ -111,6 +120,21 @@ export function VideoCard({
           )}
         </div>
       </div>
+
+      {/* Delete button - appears on hover */}
+      {onDelete && (
+        <button
+          onClick={handleDelete}
+          className={cn(
+            "absolute top-2 right-2 p-2 rounded-full bg-red-500/80 text-white transition-all duration-200 z-10",
+            "hover:bg-red-600 hover:scale-110",
+            isHovered ? "opacity-100" : "opacity-0"
+          )}
+          title="Delete video"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      )}
 
       {/* Lock indicator when not decrypted */}
       {!video.thumbnailUrl && !isDecrypting && (

@@ -114,7 +114,7 @@ export async function cleanupTempDir(sessionId: string): Promise<void> {
 }
 
 // Delete file and its directory
-export async function deleteFile(fileId: string): Promise<void> {
+export async function deleteEncryptedFile(fileId: string): Promise<void> {
   const dir = join(UPLOAD_DIR, fileId);
   try {
     const files = await readdir(dir);
@@ -124,6 +124,16 @@ export async function deleteFile(fileId: string): Promise<void> {
     await rmdir(dir);
   } catch (error) {
     // Directory might not exist
+  }
+}
+
+// Delete encrypted thumbnail
+export async function deleteEncryptedThumbnail(fileId: string): Promise<void> {
+  const thumbnailPath = getThumbnailPath(fileId);
+  try {
+    await unlink(thumbnailPath);
+  } catch (error) {
+    // File might not exist
   }
 }
 

@@ -39,6 +39,7 @@ interface GalleryState {
   decryptVideoFile: (id: string) => Promise<string | undefined>;
   decryptThumbnail: (id: string) => Promise<string | undefined>;
   decryptVideoMetadata: (id: string) => Promise<{ title?: string; description?: string } | undefined>;
+  deleteVideo: (id: string) => Promise<void>;
   reorderVideos: (newOrder: string[]) => Promise<void>;
   clearError: () => void;
   clearCache: () => void;
@@ -273,6 +274,43 @@ export const useGallery = create<GalleryState>((set, get) => ({
     } catch (error) {
       console.error('Error decrypting video file:', error);
       return undefined;
+    }
+  },
+
+  deleteVideo: async (id: string) => {
+    try {
+      console.log('[Gallery] Deleting video:', id);
+      const response = await fetch(`/api/files/${id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[Gallery] Delete failed:', response.status, errorText);
+        throw new Error(`Failed to delete video: ${response.status}`);
+      }
+
+      // Remove from local state
+      set((state) => ({
+        videos: state.videos.filter((v) => v.id !== id),
+      }));
+
+      // Clean up cached URLs
+      const cached = get().decryptedCache.get(id);
+      if (cached?.thumbnailUrl) {
+        URL.revokeObjectURL(cached.thumbnailUrl);
+      }
+      if (cached?.videoUrl) {
+        URL.revokeObjectURL(cached.videoUrl);
+      }
+      get().decryptedCache.delete(id);
+
+      console.log('[Gallery] Video deleted successfully');
+    } catch (error) {
+      console.error('Error deleting video:', error);
+      set({
+        error: error instanceof Error ? error.message : 'Failed to delete video',
+      });
     }
   },
 

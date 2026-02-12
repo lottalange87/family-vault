@@ -29,6 +29,7 @@ export default function GalleryPage() {
     fetchGallery,
     decryptVideo,
     decryptVideoFile,
+    deleteVideo,
     clearCache,
   } = useGallery();
   const { uploads, isProcessing, lastCompletedAt, resetLastCompleted } = useUpload();
@@ -237,6 +238,7 @@ export default function GalleryPage() {
             }))}
             onDecrypt={decryptVideo}
             onDecryptVideo={decryptVideoFile}
+            onDelete={deleteVideo}
           />
         </div>
       </main>
