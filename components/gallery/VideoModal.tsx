@@ -247,36 +247,30 @@ export function VideoModal({
     }
   }, [masterKey, appendNextChunk]);
 
-  // Initialize
+  // Initialize when modal opens
   useEffect(() => {
     if (!isOpen || !video?.id || !masterKey) {
-      // Reset when closing
       if (!isOpen) {
         hasInitializedRef.current = false;
         cleanup();
+        setIsLoading(false);
+        setError(null);
       }
       return;
     }
     
-    // Prevent double initialization
     if (hasInitializedRef.current) return;
     
     console.log('[VideoModal] Opening video', video.id);
     hasInitializedRef.current = true;
     setIsLoading(true);
     
-    // Small delay to ensure videoRef is populated
-    setTimeout(() => {
-      if (videoRef.current) {
-        onDecrypt().then(() => {
-          setupMediaSource(video.id);
-        });
-      } else {
-        console.error('[VideoModal] Video ref still null after delay');
-        setError("Video player initialization failed");
-        setIsLoading(false);
-      }
-    }, 100);
+    onDecrypt().then(() => {
+      // Small delay to ensure DOM is ready
+      setTimeout(() => {
+        setupMediaSource(video.id);
+      }, 50);
+    });
 
     return () => cleanup();
   }, [isOpen, video?.id, masterKey]);
@@ -327,22 +321,28 @@ export function VideoModal({
           )}
 
           <div className="relative w-full h-full flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex-1 flex items-center justify-center p-4 pt-16">
-              {isLoading ? (
-                <div className="flex flex-col items-center text-white">
+            <div className="flex-1 flex items-center justify-center p-4 pt-16 relative">
+              <video 
+                ref={videoRef} 
+                controls 
+                autoPlay 
+                className="max-w-full max-h-full rounded-lg" 
+                style={{ display: isLoading || error ? 'none' : 'block' }}
+              />
+              {isLoading && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
                   <Loader2 className="h-12 w-12 animate-spin mb-4" />
                   <p>{loadingText}</p>
                   {bufferedChunks > 0 && (
                     <p className="text-sm text-white/50 mt-2">Buffered {bufferedChunks} / {totalChunksState} segments</p>
                   )}
                 </div>
-              ) : error ? (
-                <div className="flex flex-col items-center text-white">
+              )}
+              {error && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
                   <Lock className="h-16 w-16 mb-4 text-red-400" />
                   <p>{error}</p>
                 </div>
-              ) : (
-                <video ref={videoRef} controls autoPlay className="max-w-full max-h-full rounded-lg" />
               )}
             </div>
 
