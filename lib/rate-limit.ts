@@ -24,17 +24,17 @@ interface RateLimitOptions {
 // Default rate limits
 const DEFAULT_UPLOAD_LIMIT: RateLimitOptions = {
   windowMs: 60 * 60 * 1000, // 1 hour
-  maxRequests: 50, // 50 uploads per hour
+  maxRequests: 200, // 200 uploads per hour
 };
 
 const DEFAULT_API_LIMIT: RateLimitOptions = {
   windowMs: 60 * 1000, // 1 minute
-  maxRequests: 300, // 300 requests per minute (Gallery + thumbnails)
+  maxRequests: 1000, // 1000 requests per minute (very generous)
 };
 
 const DEFAULT_CHUNK_LIMIT: RateLimitOptions = {
   windowMs: 60 * 1000, // 1 minute
-  maxRequests: 120, // 120 chunks per minute
+  maxRequests: 500, // 500 chunks per minute
 };
 
 function getClientIdentifier(request: Request): string {

@@ -132,10 +132,14 @@ export const useGallery = create<GalleryState>((set, get) => ({
       const encryptedData = await response.arrayBuffer();
       if (encryptedData.byteLength === 0) return undefined;
 
-      const video = get().videos.find((v) => v.id === id);
-      if (!video?.metadataIv) return undefined;
+      // Get IV from header (file.iv)
+      const ivBase64 = response.headers.get('X-Encrypted-IV');
+      if (!ivBase64) {
+        console.error('[Gallery] No IV header in thumbnail response');
+        return undefined;
+      }
 
-      const iv = base64ToUint8Array(video.metadataIv);
+      const iv = base64ToUint8Array(ivBase64);
 
       const decrypted = await decryptData(encryptedData, masterKey, iv);
 

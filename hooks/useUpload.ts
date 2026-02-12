@@ -150,28 +150,8 @@ async function processSingleUpload(
   // Import crypto functions
   const { arrayBufferToBase64 } = await import("@/lib/crypto");
 
-  // Step 1: Generate thumbnail
+  // Step 1: Encrypt file first (to get the IV)
   updateUploadStatus(set, upload.id, { status: "encrypting", progress: 5 });
-  let encryptedThumbnail: string | undefined;
-  try {
-    const thumbnailBlob = await generateThumbnail(upload.file);
-    if (thumbnailBlob) {
-      console.log("[Upload] Thumbnail generated, encrypting...");
-      const thumbBuffer = await thumbnailBlob.arrayBuffer();
-      const thumbEncrypted = await encryptFile(thumbBuffer, vault.masterKey);
-      if (!thumbEncrypted?.encryptedBlob) {
-        console.warn("[Upload] Thumbnail encryption returned invalid data");
-      } else {
-        encryptedThumbnail = arrayBufferToBase64(thumbEncrypted.encryptedBlob);
-        console.log("[Upload] Thumbnail encrypted successfully");
-      }
-    }
-  } catch (e) {
-    console.warn("[Upload] Failed to generate thumbnail:", e);
-  }
-
-  // Step 2: Encrypt file
-  updateUploadStatus(set, upload.id, { progress: 15 });
   console.log("[Upload] Starting file encryption...", upload.file.name);
   const fileBuffer = await upload.file.arrayBuffer();
   console.log("[Upload] File buffer loaded, size:", fileBuffer.byteLength);
@@ -179,7 +159,7 @@ async function processSingleUpload(
   let encrypted;
   try {
     encrypted = await encryptFile(fileBuffer, vault.masterKey);
-    console.log("[Upload] Encryption result:", {
+    console.log("[Upload] File encryption result:", {
       hasEncryptedData: !!encrypted?.encryptedBlob,
       encryptedDataType: typeof encrypted?.encryptedBlob,
       encryptedDataByteLength: encrypted?.encryptedBlob?.byteLength,
@@ -187,7 +167,7 @@ async function processSingleUpload(
       hasIv: !!encrypted?.iv,
     });
   } catch (encryptError) {
-    console.error("[Upload] Encryption failed:", encryptError);
+    console.error("[Upload] File encryption failed:", encryptError);
     throw new Error(`Encryption failed: ${encryptError instanceof Error ? encryptError.message : "Unknown error"}`);
   }
   
@@ -196,7 +176,24 @@ async function processSingleUpload(
     throw new Error("Encryption returned invalid data structure");
   }
 
-  updateUploadStatus(set, upload.id, { progress: 30, status: "uploading" });
+  // Step 2: Generate and encrypt thumbnail with the SAME IV as the file
+  updateUploadStatus(set, upload.id, { progress: 10 });
+  let encryptedThumbnail: string | undefined;
+  try {
+    const thumbnailBlob = await generateThumbnail(upload.file);
+    if (thumbnailBlob) {
+      console.log("[Upload] Thumbnail generated, encrypting with file IV...");
+      const thumbBuffer = await thumbnailBlob.arrayBuffer();
+      const { encryptData } = await import("@/lib/crypto");
+      const thumbEncrypted = await encryptData(thumbBuffer, vault.masterKey, encrypted.iv);
+      encryptedThumbnail = arrayBufferToBase64(thumbEncrypted);
+      console.log("[Upload] Thumbnail encrypted successfully");
+    }
+  } catch (e) {
+    console.warn("[Upload] Failed to generate thumbnail:", e);
+  }
+
+  updateUploadStatus(set, upload.id, { progress: 15, status: "uploading" });
 
   // Step 3: Initialize upload session
   const fileId = crypto.randomUUID();
