@@ -30,6 +30,7 @@ interface VideoItem {
 interface GalleryState {
   videos: VideoItem[];
   isLoading: boolean;
+  isFetching: boolean; // Prevent parallel fetches
   error: string | null;
   decryptedCache: Map<string, { thumbnailUrl?: string; title?: string; description?: string; videoUrl?: string }>;
 
@@ -46,11 +47,18 @@ interface GalleryState {
 export const useGallery = create<GalleryState>((set, get) => ({
   videos: [],
   isLoading: false,
+  isFetching: false,
   error: null,
   decryptedCache: new Map(),
 
   fetchGallery: async () => {
-    set({ isLoading: true, error: null });
+    // Prevent parallel fetches
+    if (get().isFetching) {
+      console.log('[Gallery] Already fetching, skipping...');
+      return;
+    }
+    
+    set({ isLoading: true, isFetching: true, error: null });
 
     try {
       console.log('[Gallery] Fetching gallery...');
@@ -87,12 +95,14 @@ export const useGallery = create<GalleryState>((set, get) => ({
       set({
         videos,
         isLoading: false,
+        isFetching: false,
       });
     } catch (error) {
       console.error('[Gallery] Fetch error:', error);
       set({
         error: error instanceof Error ? error.message : 'Unknown error',
         isLoading: false,
+        isFetching: false,
       });
     }
   },

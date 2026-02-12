@@ -302,11 +302,24 @@ async function generateThumbnail(file: File): Promise<Blob | null> {
     }
 
     video.src = URL.createObjectURL(file);
-    video.currentTime = 1; // Seek to 1 second
+    video.muted = true;
+    video.preload = "metadata";
 
-    video.addEventListener("loadeddata", () => {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+    let seeked = false;
+
+    video.addEventListener("loadedmetadata", () => {
+      // Seek to 1 second (or 10% of duration if video is short)
+      const seekTime = Math.min(1, video.duration * 0.1);
+      video.currentTime = seekTime;
+    });
+
+    video.addEventListener("seeked", () => {
+      if (seeked) return;
+      seeked = true;
+
+      // Draw video to canvas
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 360;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
       canvas.toBlob(
@@ -319,15 +332,16 @@ async function generateThumbnail(file: File): Promise<Blob | null> {
       );
     });
 
-    video.addEventListener("error", () => {
+    video.addEventListener("error", (e) => {
+      console.error("[Thumbnail] Video error:", e);
       URL.revokeObjectURL(video.src);
       reject(new Error("Failed to load video"));
     });
 
-    // Timeout after 5 seconds
+    // Timeout after 10 seconds
     setTimeout(() => {
       URL.revokeObjectURL(video.src);
       reject(new Error("Thumbnail generation timeout"));
-    }, 5000);
+    }, 10000);
   });
 }

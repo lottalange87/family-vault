@@ -41,6 +41,13 @@ function getClientIdentifier(request: Request): string {
   // Get IP from X-Forwarded-For header or fallback to unknown
   const forwarded = request.headers.get("x-forwarded-for");
   const ip = forwarded?.split(",")[0]?.trim() || "unknown";
+  
+  // For local development, use a unique identifier per browser session
+  // to avoid rate limit collisions
+  if (ip === "unknown" || ip.startsWith("192.168.") || ip === "127.0.0.1") {
+    return "local-dev";
+  }
+  
   return ip;
 }
 
