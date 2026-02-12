@@ -23,6 +23,7 @@ interface VideoModalProps {
   isOpen: boolean;
   onClose: () => void;
   onDecrypt: () => Promise<void>;
+  onDecryptVideo: () => Promise<string | undefined>;
   hasNext: boolean;
   hasPrev: boolean;
   onNext: () => void;
@@ -34,6 +35,7 @@ export function VideoModal({
   isOpen,
   onClose,
   onDecrypt,
+  onDecryptVideo,
   hasNext,
   hasPrev,
   onNext,
@@ -42,16 +44,22 @@ export function VideoModal({
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
 
-  // Auto-decrypt when opening if not already decrypted
+  // Auto-decrypt when opening
   useEffect(() => {
-    if (isOpen && !videoUrl) {
+    if (isOpen && video?.id) {
       setIsDecrypting(true);
+      // Decrypt metadata first
       onDecrypt().then(() => {
-        setIsDecrypting(false);
-        // Video URL will be set by the parent component after decryption
+        // Then decrypt the actual video file
+        onDecryptVideo().then((url) => {
+          if (url) {
+            setVideoUrl(url);
+          }
+          setIsDecrypting(false);
+        });
       });
     }
-  }, [isOpen, videoUrl, onDecrypt]);
+  }, [isOpen, video?.id, onDecrypt, onDecryptVideo]);
 
   // Handle keyboard navigation
   useEffect(() => {

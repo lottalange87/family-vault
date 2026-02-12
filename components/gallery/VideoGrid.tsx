@@ -19,6 +19,7 @@ interface Video {
 interface VideoGridProps {
   videos: Video[];
   onDecrypt: (id: string) => Promise<void>;
+  onDecryptVideo: (id: string) => Promise<string | undefined>;
   onReorder?: (newOrder: string[]) => void;
   isEditMode?: boolean;
 }
@@ -26,6 +27,7 @@ interface VideoGridProps {
 export function VideoGrid({
   videos,
   onDecrypt,
+  onDecryptVideo,
   onReorder,
   isEditMode = false,
 }: VideoGridProps) {
@@ -70,6 +72,7 @@ export function VideoGrid({
           isOpen={!!selectedVideoId}
           onClose={() => setSelectedVideoId(null)}
           onDecrypt={() => onDecrypt(selectedVideoId)}
+          onDecryptVideo={() => onDecryptVideo(selectedVideoId)}
           hasNext={videos.findIndex((v) => v.id === selectedVideoId) < videos.length - 1}
           hasPrev={videos.findIndex((v) => v.id === selectedVideoId) > 0}
           onNext={() => {

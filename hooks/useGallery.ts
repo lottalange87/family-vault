@@ -26,10 +26,11 @@ interface GalleryState {
   videos: VideoItem[];
   isLoading: boolean;
   error: string | null;
-  decryptedCache: Map<string, { thumbnailUrl?: string; title?: string; description?: string }>;
+  decryptedCache: Map<string, { thumbnailUrl?: string; title?: string; description?: string; videoUrl?: string }>;
 
   fetchGallery: () => Promise<void>;
   decryptVideo: (id: string) => Promise<void>;
+  decryptVideoFile: (id: string) => Promise<string | undefined>;
   decryptThumbnail: (id: string) => Promise<string | undefined>;
   decryptVideoMetadata: (id: string) => Promise<{ title?: string; description?: string } | undefined>;
   reorderVideos: (newOrder: string[]) => Promise<void>;
@@ -175,14 +176,21 @@ export const useGallery = create<GalleryState>((set, get) => ({
       let title = '';
       let description = '';
 
-      if (video.encryptedTitle) {
-        const titleData = base64ToUint8Array(video.encryptedTitle).buffer;
-        title = await decryptMetadata(titleData, masterKey, iv);
-      }
-
-      if (video.encryptedDescription) {
-        const descData = base64ToUint8Array(video.encryptedDescription).buffer;
-        description = await decryptMetadata(descData, masterKey, iv);
+      if (video.encryptedTitle || video.encryptedDescription) {
+        const metadata = await decryptMetadata(
+          {
+            encryptedTitle: video.encryptedTitle
+              ? base64ToUint8Array(video.encryptedTitle)
+              : undefined,
+            encryptedDescription: video.encryptedDescription
+              ? base64ToUint8Array(video.encryptedDescription)
+              : undefined,
+          },
+          iv,
+          masterKey
+        );
+        title = metadata.title || '';
+        description = metadata.description || '';
       }
 
       const currentCache = get().decryptedCache.get(id) || {};
@@ -192,6 +200,57 @@ export const useGallery = create<GalleryState>((set, get) => ({
     } catch (error) {
       console.error('Error decrypting metadata:', error);
       return { title: '', description: '' };
+    }
+  },
+
+  decryptVideoFile: async (id: string) => {
+    const masterKey = useVault.getState().masterKey;
+    if (!masterKey) throw new Error('Vault not unlocked');
+
+    const cached = get().decryptedCache.get(id);
+    if (cached?.videoUrl) {
+      return cached.videoUrl;
+    }
+
+    try {
+      console.log('[Gallery] Fetching encrypted video...');
+      const response = await fetch(`/api/files/${id}/stream`);
+      if (!response.ok) {
+        console.error('[Gallery] Failed to fetch video:', response.status);
+        return undefined;
+      }
+
+      // Read binary data
+      const encryptedData = await response.arrayBuffer();
+      if (encryptedData.byteLength === 0) {
+        console.error('[Gallery] Empty video data');
+        return undefined;
+      }
+
+      // Get IV from header
+      const ivBase64 = response.headers.get('X-Encrypted-IV');
+      if (!ivBase64) {
+        console.error('[Gallery] No IV header in response');
+        return undefined;
+      }
+
+      const iv = base64ToUint8Array(ivBase64);
+      console.log('[Gallery] Decrypting video...', encryptedData.byteLength, 'bytes');
+
+      const decrypted = await decryptData(encryptedData, masterKey, iv);
+      console.log('[Gallery] Video decrypted:', decrypted.byteLength, 'bytes');
+
+      // Create video blob URL
+      const blob = new Blob([decrypted], { type: 'video/mp4' });
+      const url = URL.createObjectURL(blob);
+
+      const currentCache = get().decryptedCache.get(id) || {};
+      get().decryptedCache.set(id, { ...currentCache, videoUrl: url });
+
+      return url;
+    } catch (error) {
+      console.error('Error decrypting video file:', error);
+      return undefined;
     }
   },
 
@@ -226,6 +285,9 @@ export const useGallery = create<GalleryState>((set, get) => ({
     get().decryptedCache.forEach((cache) => {
       if (cache.thumbnailUrl) {
         URL.revokeObjectURL(cache.thumbnailUrl);
+      }
+      if (cache.videoUrl) {
+        URL.revokeObjectURL(cache.videoUrl);
       }
     });
     get().decryptedCache.clear();

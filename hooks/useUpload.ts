@@ -147,6 +147,9 @@ async function processSingleUpload(
     throw new Error("Vault not unlocked");
   }
 
+  // Import crypto functions
+  const { arrayBufferToBase64 } = await import("@/lib/crypto");
+
   // Step 1: Generate thumbnail
   updateUploadStatus(set, upload.id, { status: "encrypting", progress: 5 });
   let encryptedThumbnail: string | undefined;
@@ -156,10 +159,10 @@ async function processSingleUpload(
       console.log("[Upload] Thumbnail generated, encrypting...");
       const thumbBuffer = await thumbnailBlob.arrayBuffer();
       const thumbEncrypted = await encryptFile(thumbBuffer, vault.masterKey);
-      if (!thumbEncrypted?.encryptedData) {
+      if (!thumbEncrypted?.encryptedBlob) {
         console.warn("[Upload] Thumbnail encryption returned invalid data");
       } else {
-        encryptedThumbnail = arrayBufferToBase64(thumbEncrypted.encryptedData);
+        encryptedThumbnail = arrayBufferToBase64(thumbEncrypted.encryptedBlob);
         console.log("[Upload] Thumbnail encrypted successfully");
       }
     }
@@ -177,9 +180,9 @@ async function processSingleUpload(
   try {
     encrypted = await encryptFile(fileBuffer, vault.masterKey);
     console.log("[Upload] Encryption result:", {
-      hasEncryptedData: !!encrypted?.encryptedData,
-      encryptedDataType: typeof encrypted?.encryptedData,
-      encryptedDataByteLength: encrypted?.encryptedData?.byteLength,
+      hasEncryptedData: !!encrypted?.encryptedBlob,
+      encryptedDataType: typeof encrypted?.encryptedBlob,
+      encryptedDataByteLength: encrypted?.encryptedBlob?.byteLength,
       hasWrappedFileKey: !!encrypted?.wrappedFileKey,
       hasIv: !!encrypted?.iv,
     });
@@ -188,7 +191,7 @@ async function processSingleUpload(
     throw new Error(`Encryption failed: ${encryptError instanceof Error ? encryptError.message : "Unknown error"}`);
   }
   
-  if (!encrypted || !encrypted.encryptedData) {
+  if (!encrypted || !encrypted.encryptedBlob) {
     console.error("[Upload] encryptFile returned invalid result:", encrypted);
     throw new Error("Encryption returned invalid data structure");
   }
@@ -197,11 +200,11 @@ async function processSingleUpload(
 
   // Step 3: Initialize upload session
   const fileId = crypto.randomUUID();
-  const totalChunks = Math.ceil(encrypted.encryptedData.byteLength / CHUNK_SIZE);
+  const totalChunks = Math.ceil(encrypted.encryptedBlob.byteLength / CHUNK_SIZE);
 
   // Encrypt the filename separately for metadata
   console.log("[Upload] Encrypting filename...", upload.file.name);
-  const { encryptData, generateIV, arrayBufferToBase64 } = await import("@/lib/crypto");
+  const { encryptData, generateIV } = await import("@/lib/crypto");
   const filenameIV = generateIV();
   const encryptedFilenameBuffer = await encryptData(upload.file.name, vault.masterKey, filenameIV);
   const encryptedFilenameBase64 = arrayBufferToBase64(encryptedFilenameBuffer);
@@ -239,7 +242,7 @@ async function processSingleUpload(
   const { sessionId } = await initResponse.json();
 
   // Step 4: Upload chunks
-  const encryptedArray = new Uint8Array(encrypted.encryptedData);
+  const encryptedArray = new Uint8Array(encrypted.encryptedBlob);
   for (let i = 0; i < totalChunks; i++) {
     const start = i * CHUNK_SIZE;
     const end = Math.min(start + CHUNK_SIZE, encryptedArray.length);

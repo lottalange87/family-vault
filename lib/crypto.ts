@@ -13,6 +13,18 @@
 const PBKDF2_ITERATIONS = 600000;
 
 /**
+ * Helper to ensure we have a proper ArrayBuffer for Web Crypto API
+ * TypeScript 5.x strict mode doesn't like ArrayBufferLike (which includes SharedArrayBuffer)
+ */
+function toBufferSource(data: Uint8Array | ArrayBuffer): BufferSource {
+  if (data instanceof ArrayBuffer) {
+    return data;
+  }
+  // Copy to a new Uint8Array to avoid ArrayBufferLike issues
+  return new Uint8Array(data);
+}
+
+/**
  * Check if the Web Crypto API is available in the current context
  * Web Crypto API requires a secure context (HTTPS or localhost)
  */
@@ -105,7 +117,7 @@ export async function deriveMasterKey(
   return crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt,
+      salt: toBufferSource(salt),
       iterations: PBKDF2_ITERATIONS,
       hash: "SHA-256",
     },
@@ -132,7 +144,7 @@ export async function importKey(
 ): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     "raw",
-    keyData,
+    toBufferSource(keyData),
     { name: "AES-GCM", length: KEY_LENGTH },
     true,
     usages
@@ -151,14 +163,14 @@ export async function encryptData(
   key: CryptoKey,
   iv: Uint8Array
 ): Promise<ArrayBuffer> {
-  const dataBuffer = typeof data === "string" 
-    ? new TextEncoder().encode(data) 
+  const dataBuffer = typeof data === "string"
+    ? new TextEncoder().encode(data)
     : data;
 
   return crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
+    { name: "AES-GCM", iv: toBufferSource(iv) },
     key,
-    dataBuffer
+    toBufferSource(dataBuffer)
   );
 }
 
@@ -175,9 +187,9 @@ export async function decryptData(
   iv: Uint8Array
 ): Promise<ArrayBuffer> {
   return crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
+    { name: "AES-GCM", iv: toBufferSource(iv) },
     key,
-    encryptedData
+    toBufferSource(encryptedData)
   );
 }
 
@@ -197,9 +209,9 @@ export async function wrapFileKey(
   const fileKeyRaw = await crypto.subtle.exportKey("raw", fileKey);
   // Encrypt with master key using GCM
   return crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
+    { name: "AES-GCM", iv: toBufferSource(iv) },
     masterKey,
-    fileKeyRaw
+    toBufferSource(fileKeyRaw)
   );
 }
 
@@ -217,14 +229,14 @@ export async function unwrapFileKey(
 ): Promise<CryptoKey> {
   // Decrypt the wrapped key
   const fileKeyRaw = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
+    { name: "AES-GCM", iv: toBufferSource(iv) },
     masterKey,
-    wrappedKey
+    toBufferSource(wrappedKey)
   );
   // Import as CryptoKey
   return crypto.subtle.importKey(
     "raw",
-    fileKeyRaw,
+    toBufferSource(fileKeyRaw),
     { name: "AES-GCM", length: KEY_LENGTH },
     true,
     ["encrypt", "decrypt"]
@@ -240,7 +252,7 @@ export async function encryptFile(
   masterKey: CryptoKey
 ): Promise<{
   encryptedBlob: ArrayBuffer;
-  wrappedFileKey: ArrayBuffer;
+  wrappedFileKey: Uint8Array;
   iv: Uint8Array;
 }> {
   // Generate a random file key
@@ -265,7 +277,7 @@ export async function encryptFile(
   combined.set(keyWrapIV, wrappedFileKey.byteLength);
   combined.set(fileIV, wrappedFileKey.byteLength + IV_LENGTH);
 
-  return { encryptedData: encryptedBlob, wrappedFileKey: combined, iv: fileIV };
+  return { encryptedBlob, wrappedFileKey: combined, iv: fileIV };
 }
 
 /**
@@ -359,8 +371,8 @@ export async function decryptMetadata(
 
 // Utility functions for encoding/decoding
 
-export function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
+export function arrayBufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   let binary = "";
   for (let i = 0; i < bytes.byteLength; i++) {
     binary += String.fromCharCode(bytes[i]);

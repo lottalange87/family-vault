@@ -27,6 +27,7 @@ export default function GalleryPage() {
     isLoading,
     fetchGallery,
     decryptVideo,
+    decryptVideoFile,
     clearCache,
   } = useGallery();
   const { uploads, isProcessing, lastCompletedAt, resetLastCompleted } = useUpload();
@@ -219,6 +220,7 @@ export default function GalleryPage() {
               thumbnailUrl: v.thumbnailUrl,
             }))}
             onDecrypt={decryptVideo}
+            onDecryptVideo={decryptVideoFile}
           />
         </div>
       </main>
