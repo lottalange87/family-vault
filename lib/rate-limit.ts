@@ -29,7 +29,7 @@ const DEFAULT_UPLOAD_LIMIT: RateLimitOptions = {
 
 const DEFAULT_API_LIMIT: RateLimitOptions = {
   windowMs: 60 * 1000, // 1 minute
-  maxRequests: 60, // 60 requests per minute
+  maxRequests: 300, // 300 requests per minute (Gallery + thumbnails)
 };
 
 const DEFAULT_CHUNK_LIMIT: RateLimitOptions = {

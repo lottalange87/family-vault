@@ -127,13 +127,13 @@ export const useGallery = create<GalleryState>((set, get) => ({
       const response = await fetch(`/api/files/${id}/thumbnail`);
       if (!response.ok) return undefined;
 
-      const data = await response.json();
-      if (!data.encryptedThumbnail) return undefined;
+      // Read binary data directly
+      const encryptedData = await response.arrayBuffer();
+      if (encryptedData.byteLength === 0) return undefined;
 
       const video = get().videos.find((v) => v.id === id);
       if (!video?.metadataIv) return undefined;
 
-      const encryptedData = new Uint8Array(data.encryptedThumbnail).buffer;
       const iv = base64ToUint8Array(video.metadataIv);
 
       const decrypted = await decryptData(encryptedData, masterKey, iv);
