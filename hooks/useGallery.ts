@@ -33,6 +33,7 @@ interface GalleryState {
   isFetching: boolean; // Prevent parallel fetches
   error: string | null;
   decryptedCache: Map<string, { thumbnailUrl?: string; title?: string; description?: string; videoUrl?: string }>;
+  decryptingVideos: Set<string>; // Track videos being decrypted to prevent infinite loops
 
   fetchGallery: () => Promise<void>;
   decryptVideo: (id: string) => Promise<void>;
@@ -51,6 +52,7 @@ export const useGallery = create<GalleryState>((set, get) => ({
   isFetching: false,
   error: null,
   decryptedCache: new Map(),
+  decryptingVideos: new Set(),
 
   fetchGallery: async () => {
     // Prevent parallel fetches
@@ -109,7 +111,18 @@ export const useGallery = create<GalleryState>((set, get) => ({
   },
 
   decryptVideo: async (id: string) => {
-    const { decryptThumbnail, decryptVideoMetadata } = get();
+    const { decryptThumbnail, decryptVideoMetadata, decryptingVideos } = get();
+    
+    // Prevent duplicate decryption attempts
+    if (decryptingVideos.has(id)) {
+      console.log('[Gallery] Already decrypting video', id, '- skipping');
+      return;
+    }
+    
+    // Mark as decrypting
+    set((state) => ({
+      decryptingVideos: new Set(state.decryptingVideos).add(id),
+    }));
 
     try {
       const [thumbnailUrl, metadata] = await Promise.all([
@@ -129,9 +142,17 @@ export const useGallery = create<GalleryState>((set, get) => ({
               }
             : v
         ),
+        decryptingVideos: new Set(
+          [...state.decryptingVideos].filter((vid) => vid !== id)
+        ),
       }));
     } catch (error) {
       console.error('Error decrypting video:', error);
+      set((state) => ({
+        decryptingVideos: new Set(
+          [...state.decryptingVideos].filter((vid) => vid !== id)
+        ),
+      }));
     }
   },
 
