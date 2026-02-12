@@ -36,17 +36,31 @@ export function VideoCard({
 
   const handleClick = async () => {
     console.log('[VideoCard] Clicked, thumbnailUrl:', video.thumbnailUrl, 'isDecrypting:', isDecrypting);
-    if (!video.thumbnailUrl && !isDecrypting) {
-      console.log('[VideoCard] Starting decryption...');
-      setIsDecrypting(true);
-      try {
-        await onDecrypt();
-      } catch (e) {
-        console.error('[VideoCard] Decryption failed:', e);
-      }
+    
+    // If already has thumbnail, just open
+    if (video.thumbnailUrl) {
+      onClick();
+      return;
+    }
+    
+    // If currently decrypting, don't do anything
+    if (isDecrypting) {
+      console.log('[VideoCard] Already decrypting, ignoring click');
+      return;
+    }
+    
+    // Start decryption
+    console.log('[VideoCard] Starting decryption...');
+    setIsDecrypting(true);
+    try {
+      await onDecrypt();
+      // Only open after successful decryption
+      onClick();
+    } catch (e) {
+      console.error('[VideoCard] Decryption failed:', e);
+    } finally {
       setIsDecrypting(false);
     }
-    onClick();
   };
 
   const handleDelete = (e: React.MouseEvent) => {
