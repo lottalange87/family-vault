@@ -25,15 +25,15 @@ export function VaultInit() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
-    if (password === confirmPassword && password.length >= 12 && acceptedWarning) {
+    if (password === confirmPassword && password.length >= 8 && acceptedWarning) {
       await initializeVault(password);
     }
   };
 
   const getPasswordStrength = (pwd: string) => {
     let strength = 0;
+    if (pwd.length >= 8) strength++;
     if (pwd.length >= 12) strength++;
-    if (pwd.length >= 16) strength++;
     if (/[A-Z]/.test(pwd)) strength++;
     if (/[0-9]/.test(pwd)) strength++;
     if (/[^A-Za-z0-9]/.test(pwd)) strength++;
@@ -105,7 +105,7 @@ export function VaultInit() {
                   onChange={(e) => setPassword(e.target.value)}
                   className="pl-10 pr-10"
                   required
-                  minLength={12}
+                  minLength={8}
                 />
                 <button
                   type="button"
@@ -139,7 +139,7 @@ export function VaultInit() {
                     strength >= 4 ? "text-green-500" : strength >= 3 ? "text-yellow-500" : "text-red-500"
                   }`}>
                     {strength >= 5 ? "Excellent" : strength >= 4 ? "Strong" : strength >= 3 ? "Good" : strength >= 2 ? "Fair" : "Weak"}
-                    {strength < 3 && " - Use 12+ chars with mixed case, numbers, and symbols"}
+                    {strength < 3 && " - Use 8+ chars with mixed case, numbers, and symbols"}
                   </p>
                 </div>
               )}
@@ -185,7 +185,7 @@ export function VaultInit() {
             <Button
               type="submit"
               className="w-full"
-              disabled={isLoading || !acceptedWarning || !passwordsMatch || password.length < 12 || cryptoAvailable === false}
+              disabled={isLoading || !acceptedWarning || !passwordsMatch || password.length < 8 || cryptoAvailable === false}
             >
               {isLoading ? "Initializing..." : cryptoAvailable === false ? "Secure Connection Required" : "Create Vault"}
             </Button>

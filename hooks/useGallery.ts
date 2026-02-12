@@ -12,6 +12,7 @@ import { useVault } from './useVault';
 interface VideoItem {
   id: string;
   encryptedThumbnailPath: string | null;
+  encryptedFilename: string | null;
   wrappedFileKey: string;
   iv: string; // File content IV
   filenameIv?: string | null;
@@ -84,6 +85,7 @@ export const useGallery = create<GalleryState>((set, get) => ({
       const videos = rawVideos.map((v: any) => ({
         id: v.id,
         encryptedThumbnailPath: v.encryptedThumbnailPath,
+        encryptedFilename: v.encryptedFilename || null,
         wrappedFileKey: v.wrappedFileKey,
         iv: v.iv,
         filenameIv: v.filenameIv || v.iv, // Fallback to file IV if not set
@@ -169,17 +171,29 @@ export const useGallery = create<GalleryState>((set, get) => ({
     if (!video) return undefined;
 
     try {
+      console.log('[Gallery] Fetching thumbnail for', id);
       const response = await fetch(`/api/files/${id}/thumbnail`);
-      if (!response.ok) return undefined;
+      if (!response.ok) {
+        console.warn('[Gallery] Thumbnail fetch failed:', response.status);
+        return undefined;
+      }
 
       // Read binary data directly
       const encryptedData = await response.arrayBuffer();
-      if (encryptedData.byteLength === 0) return undefined;
+      if (encryptedData.byteLength === 0) {
+        console.warn('[Gallery] Empty thumbnail data');
+        return undefined;
+      }
+      console.log('[Gallery] Thumbnail encrypted data:', encryptedData.byteLength, 'bytes');
 
       // Use thumbnailIv (or fallback to file iv)
-      const iv = base64ToUint8Array(video.thumbnailIv || video.iv);
+      const ivBase64 = video.thumbnailIv || video.iv;
+      console.log('[Gallery] Using IV:', ivBase64);
+      const iv = base64ToUint8Array(ivBase64);
 
+      console.log('[Gallery] Decrypting thumbnail...');
       const decrypted = await decryptData(encryptedData, masterKey, iv);
+      console.log('[Gallery] Thumbnail decrypted:', decrypted.byteLength, 'bytes');
 
       const blob = new Blob([decrypted], { type: 'image/jpeg' });
       const url = URL.createObjectURL(blob);
@@ -189,7 +203,7 @@ export const useGallery = create<GalleryState>((set, get) => ({
 
       return url;
     } catch (error) {
-      console.error('Error decrypting thumbnail:', error);
+      console.error('[Gallery] Error decrypting thumbnail:', error);
       return undefined;
     }
   },
@@ -205,25 +219,19 @@ export const useGallery = create<GalleryState>((set, get) => ({
 
     try {
       const video = get().videos.find((v) => v.id === id);
-      if (!video || (!video.encryptedTitle && !video.encryptedDescription)) {
+      if (!video) {
         return { title: '', description: '' };
       }
-
-      if (!video.metadataIv) {
-        return { title: '', description: '' };
-      }
-
-      const iv = base64ToUint8Array(video.metadataIv);
 
       let title = '';
       let description = '';
 
-      if (video.encryptedTitle || video.encryptedDescription) {
+      // First try to decrypt the custom title/description if set
+      if (video.encryptedTitle && video.metadataIv) {
+        const iv = base64ToUint8Array(video.metadataIv);
         const metadata = await decryptMetadata(
           {
-            encryptedTitle: video.encryptedTitle
-              ? base64ToUint8Array(video.encryptedTitle)
-              : undefined,
+            encryptedTitle: base64ToUint8Array(video.encryptedTitle),
             encryptedDescription: video.encryptedDescription
               ? base64ToUint8Array(video.encryptedDescription)
               : undefined,
@@ -233,6 +241,18 @@ export const useGallery = create<GalleryState>((set, get) => ({
         );
         title = metadata.title || '';
         description = metadata.description || '';
+      }
+
+      // If no custom title, fall back to filename
+      if (!title && video.encryptedFilename && video.filenameIv) {
+        const iv = base64ToUint8Array(video.filenameIv);
+        const decryptedFilename = await decryptData(
+          base64ToUint8Array(video.encryptedFilename),
+          masterKey,
+          iv
+        );
+        // Convert Uint8Array to string
+        title = new TextDecoder().decode(decryptedFilename);
       }
 
       const currentCache = get().decryptedCache.get(id) || {};
