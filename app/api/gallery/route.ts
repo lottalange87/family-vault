@@ -20,7 +20,9 @@ export async function GET() {
       encryptedFilename: file.encryptedFilename,
       encryptedThumbnailPath: file.encryptedThumbnailPath,
       wrappedFileKey: file.wrappedFileKey,
-      iv: file.iv,
+      iv: file.iv, // File content IV
+      filenameIv: file.filenameIv, // Filename IV
+      thumbnailIv: file.thumbnailIv, // Thumbnail IV
       fileSize: file.fileSize,
       mimeType: file.mimeType,
       orderIndex: file.orderIndex,
@@ -30,7 +32,7 @@ export async function GET() {
             id: file.metadata.id,
             encryptedTitle: file.metadata.encryptedTitle,
             encryptedDescription: file.metadata.encryptedDescription,
-            iv: file.metadata.iv,
+            iv: file.metadata.iv, // Metadata IV (title/description)
           }
         : null,
     }));

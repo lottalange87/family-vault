@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import {
+  decryptFile,
   decryptData,
   decryptMetadata,
   base64ToUint8Array,
@@ -11,6 +12,10 @@ import { useVault } from './useVault';
 interface VideoItem {
   id: string;
   encryptedThumbnailPath: string | null;
+  wrappedFileKey: string;
+  iv: string; // File content IV
+  filenameIv?: string | null;
+  thumbnailIv?: string | null;
   orderIndex: number;
   createdAt: string;
   encryptedTitle: string | null;
@@ -64,10 +69,14 @@ export const useGallery = create<GalleryState>((set, get) => ({
       // API returns array directly, not wrapped in { videos: [...] }
       const rawVideos = Array.isArray(data) ? data : (data.videos || []);
       
-      // Map API response to VideoItem format (metadata.iv -> metadataIv)
+      // Map API response to VideoItem format
       const videos = rawVideos.map((v: any) => ({
         id: v.id,
         encryptedThumbnailPath: v.encryptedThumbnailPath,
+        wrappedFileKey: v.wrappedFileKey,
+        iv: v.iv,
+        filenameIv: v.filenameIv || v.iv, // Fallback to file IV if not set
+        thumbnailIv: v.thumbnailIv || v.iv, // Fallback to file IV if not set
         orderIndex: v.orderIndex,
         createdAt: v.createdAt,
         encryptedTitle: v.metadata?.encryptedTitle || null,
@@ -124,6 +133,9 @@ export const useGallery = create<GalleryState>((set, get) => ({
       return cached.thumbnailUrl;
     }
 
+    const video = get().videos.find((v) => v.id === id);
+    if (!video) return undefined;
+
     try {
       const response = await fetch(`/api/files/${id}/thumbnail`);
       if (!response.ok) return undefined;
@@ -132,14 +144,8 @@ export const useGallery = create<GalleryState>((set, get) => ({
       const encryptedData = await response.arrayBuffer();
       if (encryptedData.byteLength === 0) return undefined;
 
-      // Get IV from header (file.iv)
-      const ivBase64 = response.headers.get('X-Encrypted-IV');
-      if (!ivBase64) {
-        console.error('[Gallery] No IV header in thumbnail response');
-        return undefined;
-      }
-
-      const iv = base64ToUint8Array(ivBase64);
+      // Use thumbnailIv (or fallback to file iv)
+      const iv = base64ToUint8Array(video.thumbnailIv || video.iv);
 
       const decrypted = await decryptData(encryptedData, masterKey, iv);
 
@@ -216,6 +222,9 @@ export const useGallery = create<GalleryState>((set, get) => ({
       return cached.videoUrl;
     }
 
+    const video = get().videos.find((v) => v.id === id);
+    if (!video) return undefined;
+
     try {
       console.log('[Gallery] Fetching encrypted video...');
       const response = await fetch(`/api/files/${id}/stream`);
@@ -231,17 +240,16 @@ export const useGallery = create<GalleryState>((set, get) => ({
         return undefined;
       }
 
-      // Get IV from header
-      const ivBase64 = response.headers.get('X-Encrypted-IV');
-      if (!ivBase64) {
-        console.error('[Gallery] No IV header in response');
-        return undefined;
-      }
-
-      const iv = base64ToUint8Array(ivBase64);
       console.log('[Gallery] Decrypting video...', encryptedData.byteLength, 'bytes');
-
-      const decrypted = await decryptData(encryptedData, masterKey, iv);
+      
+      // Use decryptFile which unwraps the file key and decrypts the content
+      const decrypted = await decryptFile(
+        encryptedData,
+        base64ToUint8Array(video.wrappedFileKey),
+        base64ToUint8Array(video.iv),
+        masterKey
+      );
+      
       console.log('[Gallery] Video decrypted:', decrypted.byteLength, 'bytes');
 
       // Create video blob URL

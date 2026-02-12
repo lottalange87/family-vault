@@ -43,6 +43,7 @@ export async function GET(
         "Content-Length": encryptedThumbnail.length.toString(),
         "Cache-Control": "private, max-age=86400", // Cache for 24 hours
         "X-Encrypted-IV": file.iv,
+        "X-Thumbnail-IV": file.thumbnailIv || file.iv, // Thumbnail IV (or file IV as fallback)
       },
     });
   } catch (error) {

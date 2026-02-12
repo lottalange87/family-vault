@@ -16,7 +16,9 @@ export const encryptedFiles = sqliteTable("encrypted_files", {
   encryptedBlobPath: text("encrypted_blob_path").notNull(),
   encryptedThumbnailPath: text("encrypted_thumbnail_path"),
   wrappedFileKey: text("wrapped_file_key").notNull(), // Master key encrypted file key
-  iv: text("iv").notNull(), // Base64 IV (96-bit for GCM)
+  iv: text("iv").notNull(), // Base64 IV for file content (96-bit for GCM)
+  filenameIv: text("filename_iv"), // Base64 IV for filename (stored separately)
+  thumbnailIv: text("thumbnail_iv"), // Base64 IV for thumbnail
   fileSize: integer("file_size"), // Unencrypted for statistics
   mimeType: text("mime_type"), // Unencrypted for content-type hints
   orderIndex: integer("order_index").default(0).notNull(),

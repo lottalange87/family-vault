@@ -37,6 +37,7 @@ export async function GET(
         "Content-Disposition": `attachment; filename="${id}.enc"`,
         "Cache-Control": "private, max-age=3600",
         "X-Encrypted-IV": file.iv,
+        "X-Wrapped-File-Key": file.wrappedFileKey, // Client needs this to decrypt
       },
     });
   } catch (error) {

@@ -93,19 +93,21 @@ export async function POST(request: NextRequest) {
       encryptedThumbnailPath: thumbnailPath,
       wrappedFileKey: encryptedMeta.wrappedFileKey,
       iv: encryptedMeta.iv,
+      filenameIv: encryptedMeta.filenameIv, // Store separate filename IV
+      thumbnailIv: encryptedMeta.thumbnailIv, // Store separate thumbnail IV
       fileSize: encryptedMeta.fileSize || combinedData.length,
       mimeType: encryptedMeta.mimeType || "video/mp4",
       orderIndex,
       createdAt: now,
     });
 
-    // Create metadata record
+    // Create metadata record - use a separate metadata IV (or filename IV as fallback)
     await db.insert(encryptedMetadata).values({
       id: crypto.randomUUID(),
       fileId: session.fileId,
       encryptedTitle: null,
       encryptedDescription: null,
-      iv: encryptedMeta.iv,
+      iv: encryptedMeta.metadataIv || encryptedMeta.iv,
       updatedAt: now,
     });
 

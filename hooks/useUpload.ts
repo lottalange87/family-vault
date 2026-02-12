@@ -206,10 +206,16 @@ async function processSingleUpload(
   const encryptedFilenameBuffer = await encryptData(upload.file.name, vault.masterKey, filenameIV);
   const encryptedFilenameBase64 = arrayBufferToBase64(encryptedFilenameBuffer);
   
+  // Generate metadata IV for future title/description encryption
+  const metadataIV = generateIV();
+  
   console.log("[Upload] Metadata prepared:", {
     encryptedFilenameLength: encryptedFilenameBase64.length,
     wrappedFileKeyLength: encrypted.wrappedFileKey?.byteLength,
-    ivLength: encrypted.iv?.length,
+    fileIvLength: encrypted.iv?.length,
+    filenameIvLength: filenameIV?.length,
+    thumbnailIvLength: encrypted.iv?.length, // Same as file IV
+    metadataIvLength: metadataIV?.length,
   });
 
   const initResponse = await fetch("/api/upload/init", {
@@ -221,8 +227,10 @@ async function processSingleUpload(
       encryptedMetadata: {
         encryptedFilename: encryptedFilenameBase64,
         wrappedFileKey: arrayBufferToBase64(encrypted.wrappedFileKey),
-        iv: arrayBufferToBase64(encrypted.iv),
-        filenameIV: arrayBufferToBase64(filenameIV),
+        iv: arrayBufferToBase64(encrypted.iv), // File content IV
+        filenameIv: arrayBufferToBase64(filenameIV), // Filename IV
+        thumbnailIv: arrayBufferToBase64(encrypted.iv), // Thumbnail uses same IV as file
+        metadataIv: arrayBufferToBase64(metadataIV), // Metadata IV for title/description
         fileSize: upload.file.size,
         mimeType: upload.file.type,
         encryptedThumbnail,
