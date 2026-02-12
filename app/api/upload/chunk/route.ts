@@ -6,6 +6,15 @@ import { isValidChunkSize, getMaxChunkSize } from "@/lib/validation";
 import { checkChunkRateLimit, createRateLimitHeaders } from "@/lib/rate-limit";
 import { saveChunk } from "@/lib/storage";
 
+// Increase body size limit for encrypted chunks
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '15mb',
+    },
+  },
+};
+
 // POST /api/upload/chunk - Upload a chunk
 export async function POST(request: NextRequest) {
   try {

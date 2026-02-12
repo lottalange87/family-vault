@@ -4,12 +4,6 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
-  // Increase body size limit for encrypted chunks (10MB + auth tag overhead)
-  api: {
-    bodyParser: {
-      sizeLimit: '15mb',
-    },
-  },
   async headers() {
     return [
       {
