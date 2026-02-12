@@ -186,8 +186,32 @@ export function VideoModal({
         mediaSource.addEventListener('error', reject, { once: true });
       });
 
-      // 5. Add SourceBuffer
-      const mimeType = manifest.mimeType || 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+      // 5. Add SourceBuffer with proper MIME type
+      let mimeType = manifest.mimeType || 'video/mp4';
+      
+      // MediaSource requires codecs - try to add them if missing
+      if (mimeType === 'video/mp4' || !mimeType.includes('codecs')) {
+        // Try common codec combinations
+        const codecCandidates = [
+          'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
+          'video/mp4; codecs="avc1.64001F, mp4a.40.2"',
+          'video/mp4; codecs="avc1.4D401F"',
+          'video/mp4',
+        ];
+        
+        for (const candidate of codecCandidates) {
+          if (MediaSource.isTypeSupported(candidate)) {
+            mimeType = candidate;
+            console.log('[Stream] Using MIME type:', mimeType);
+            break;
+          }
+        }
+      }
+      
+      if (!MediaSource.isTypeSupported(mimeType)) {
+        throw new Error(`MIME type not supported: ${mimeType}`);
+      }
+      
       const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
       sourceBuffer.mode = 'segments';
       sourceBufferRef.current = sourceBuffer;
