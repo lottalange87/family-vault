@@ -264,28 +264,34 @@ export function VideoModal({
 
   // Initialize
   useEffect(() => {
-    if (!isOpen || !video?.id || !masterKey) {
-      if (!isOpen) {
-        hasInitializedRef.current = false;
-        cleanup();
-      }
+    if (!isOpen) {
+      hasInitializedRef.current = false;
+      cleanup();
+      setIsLoading(false);
+      setError(null);
       return;
     }
     
+    if (!video?.id || !masterKey) return;
     if (hasInitializedRef.current) return;
     
     console.log('[VideoModal] Opening video', video.id);
     hasInitializedRef.current = true;
     setIsLoading(true);
     
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       onDecrypt().then(() => {
-        setupMediaSource(video.id);
+        if (hasInitializedRef.current) {
+          setupMediaSource(video.id);
+        }
       });
-    }, 50);
+    }, 100);
 
-    return () => cleanup();
-  }, [isOpen, video?.id, masterKey, onDecrypt, setupMediaSource, cleanup]);
+    return () => {
+      clearTimeout(timer);
+      cleanup();
+    };
+  }, [isOpen]);
 
   // Keyboard navigation
   useEffect(() => {
