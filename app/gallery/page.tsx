@@ -54,6 +54,18 @@ export default function GalleryPage() {
     }
   }, [isUnlocked, fetchGallery]);
 
+  // Auto-decrypt first 4 videos when gallery loads
+  useEffect(() => {
+    if (isUnlocked && videos.length > 0) {
+      console.log('[Gallery] Auto-decrypting first 4 videos...');
+      videos.slice(0, 4).forEach(video => {
+        if (!video.thumbnailUrl && !video.isDecrypted) {
+          decryptVideo(video.id);
+        }
+      });
+    }
+  }, [isUnlocked, videos, decryptVideo]);
+
   // Refresh gallery when uploads complete (only when lastCompletedAt changes)
   useEffect(() => {
     if (lastCompletedAt) {
