@@ -97,10 +97,19 @@ export function VideoModal({
 
       // Get or unwrap file key
       if (!fileKeyRef.current) {
-        const wrappedKey = base64ToUint8Array(manifest.wrappedFileKey);
-        const fileIV = base64ToUint8Array(manifest.iv);
-        fileKeyRef.current = await unwrapFileKey(wrappedKey, masterKey!, fileIV);
-        console.log('[VideoModal] File key unwrapped');
+        const wrappedKeyData = base64ToUint8Array(manifest.wrappedFileKey);
+        
+        // Extract components from combined wrappedKey format:
+        // [wrappedKey (48 bytes)] [keyWrapIV (12 bytes)] [fileIV (12 bytes)]
+        const WRAPPED_KEY_LENGTH = 48; // 32 bytes key + 16 bytes auth tag
+        const IV_LENGTH = 12;
+        
+        const wrappedKey = wrappedKeyData.slice(0, WRAPPED_KEY_LENGTH);
+        const keyWrapIV = wrappedKeyData.slice(WRAPPED_KEY_LENGTH, WRAPPED_KEY_LENGTH + IV_LENGTH);
+        
+        console.log('[VideoModal] Unwrapping file key...');
+        fileKeyRef.current = await unwrapFileKey(wrappedKey, masterKey!, keyWrapIV);
+        console.log('[VideoModal] File key unwrapped successfully');
       }
 
       if (signal.aborted) return null;
@@ -211,18 +220,24 @@ export function VideoModal({
         throw new Error("Missing encryption headers");
       }
 
-      // Unwrap file key
-      const fileKey = await unwrapFileKey(
-        base64ToUint8Array(wrappedKey),
-        masterKey!,
-        base64ToUint8Array(iv)
-      );
+      // Unwrap file key - extract components from combined format
+      const wrappedKeyData = base64ToUint8Array(wrappedKey);
+      const WRAPPED_KEY_LENGTH = 48; // 32 bytes key + 16 bytes auth tag
+      const IV_LENGTH = 12;
+      
+      const wrappedKeyBytes = wrappedKeyData.slice(0, WRAPPED_KEY_LENGTH);
+      const keyWrapIV = wrappedKeyData.slice(WRAPPED_KEY_LENGTH, WRAPPED_KEY_LENGTH + IV_LENGTH);
+      const fileIV = wrappedKeyData.slice(WRAPPED_KEY_LENGTH + IV_LENGTH);
+      
+      console.log('[VideoModal] Unwrapping legacy file key...');
+      const fileKey = await unwrapFileKey(wrappedKeyBytes, masterKey!, keyWrapIV);
+      console.log('[VideoModal] Legacy file key unwrapped');
 
       if (signal.aborted) return;
 
-      // Decrypt entire file
+      // Decrypt entire file using the fileIV from the combined data
       console.log('[VideoModal] Decrypting legacy file...');
-      const decrypted = await decryptData(encryptedData, fileKey, base64ToUint8Array(iv));
+      const decrypted = await decryptData(encryptedData, fileKey, fileIV);
       console.log('[VideoModal] Legacy file decrypted:', decrypted.byteLength, 'bytes');
 
       if (signal.aborted) return;
