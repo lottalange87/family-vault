@@ -237,7 +237,6 @@ export default function GalleryPage() {
               thumbnailUrl: v.thumbnailUrl,
             }))}
             onDecrypt={decryptVideo}
-            onDecryptVideo={decryptVideoFile}
             onDelete={deleteVideo}
           />
         </div>
