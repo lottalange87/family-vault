@@ -15,13 +15,14 @@ import {
   Grid3X3,
   RefreshCw,
   Shield,
+  Loader2,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { useState } from "react";
 
 export default function GalleryPage() {
   const router = useRouter();
-  const { isUnlocked, lockVault } = useVault();
+  const { isUnlocked, lockVault, isLoading: vaultLoading } = useVault();
   const {
     videos,
     isLoading,
@@ -32,13 +33,18 @@ export default function GalleryPage() {
   } = useGallery();
   const { uploads, isProcessing, lastCompletedAt, resetLastCompleted } = useUpload();
   const [showUpload, setShowUpload] = useState(false);
+  const [isClient, setIsClient] = useState(false);
 
-  // Protect route
   useEffect(() => {
-    if (!isUnlocked) {
-      router.push("/");
+    setIsClient(true);
+  }, []);
+
+  // Protect route - redirect immediately if not unlocked
+  useEffect(() => {
+    if (isClient && !vaultLoading && !isUnlocked) {
+      router.replace("/");
     }
-  }, [isUnlocked, router]);
+  }, [isUnlocked, vaultLoading, router, isClient]);
 
   // Fetch gallery on mount
   useEffect(() => {
@@ -88,9 +94,19 @@ export default function GalleryPage() {
 
   const handleLockVault = () => {
     lockVault();
-    router.push("/");
+    router.replace("/");
   };
 
+  // Show loading or nothing while checking auth state
+  if (!isClient || vaultLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // Redirect if not unlocked - this shouldn't render but just in case
   if (!isUnlocked) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
