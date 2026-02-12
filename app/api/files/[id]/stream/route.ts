@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { encryptedFiles } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { readEncryptedBlob, readEncryptedThumbnail } from "@/lib/storage";
+import { encryptedFiles, encryptedChunks } from "@/db/schema";
+import { eq, asc } from "drizzle-orm";
+import { readEncryptedBlob, readChunk } from "@/lib/storage";
 
 // GET /api/files/[id]/stream - Stream encrypted file
 export async function GET(
@@ -24,11 +24,28 @@ export async function GET(
       );
     }
 
-    // Read encrypted blob
-    const encryptedData = await readEncryptedBlob(id);
+    // Check if this is a chunked file
+    const chunks = await db.query.encryptedChunks.findMany({
+      where: eq(encryptedChunks.fileId, id),
+      orderBy: [asc(encryptedChunks.chunkIndex)],
+    });
+
+    let encryptedData: Buffer;
+
+    if (chunks.length > 0) {
+      // Read and combine all chunks
+      const chunkBuffers: Buffer[] = [];
+      for (const chunk of chunks) {
+        const chunkData = await readChunk(id, chunk.chunkIndex);
+        chunkBuffers.push(chunkData);
+      }
+      encryptedData = Buffer.concat(chunkBuffers);
+    } else {
+      // Legacy: read single blob
+      encryptedData = await readEncryptedBlob(id);
+    }
 
     // Return encrypted blob as binary
-    // Client will decrypt this locally
     return new NextResponse(new Uint8Array(encryptedData), {
       status: 200,
       headers: {
@@ -37,7 +54,7 @@ export async function GET(
         "Content-Disposition": `attachment; filename="${id}.enc"`,
         "Cache-Control": "private, max-age=3600",
         "X-Encrypted-IV": file.iv,
-        "X-Wrapped-File-Key": file.wrappedFileKey, // Client needs this to decrypt
+        "X-Wrapped-File-Key": file.wrappedFileKey,
       },
     });
   } catch (error) {
