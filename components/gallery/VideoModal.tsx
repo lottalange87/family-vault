@@ -124,18 +124,18 @@ export function VideoModal({
             <X className="h-6 w-6" />
           </Button>
 
-          {/* Navigation buttons */}
+          {/* Navigation buttons - smaller on mobile */}
           {hasPrev && (
             <Button
               variant="ghost"
               size="icon"
-              className="absolute left-4 top-1/2 -translate-y-1/2 z-50 text-white hover:bg-white/10"
+              className="absolute left-2 md:left-4 top-1/2 -translate-y-1/2 z-50 text-white hover:bg-white/10 h-10 w-10 md:h-12 md:w-12"
               onClick={(e) => {
                 e.stopPropagation();
                 onPrev();
               }}
             >
-              <ChevronLeft className="h-8 w-8" />
+              <ChevronLeft className="h-6 w-6 md:h-8 md:w-8" />
             </Button>
           )}
 
@@ -143,13 +143,13 @@ export function VideoModal({
             <Button
               variant="ghost"
               size="icon"
-              className="absolute right-4 top-1/2 -translate-y-1/2 z-50 text-white hover:bg-white/10"
+              className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 z-50 text-white hover:bg-white/10 h-10 w-10 md:h-12 md:w-12"
               onClick={(e) => {
                 e.stopPropagation();
                 onNext();
               }}
             >
-              <ChevronRight className="h-8 w-8" />
+              <ChevronRight className="h-6 w-6 md:h-8 md:w-8" />
             </Button>
           )}
 
@@ -180,31 +180,31 @@ export function VideoModal({
               )}
             </div>
 
-            {/* Info bar */}
+            {/* Info bar - stacked on mobile */}
             {video && (
               <motion.div
                 initial={{ y: 20, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
-                className="bg-black/80 backdrop-blur-sm p-4 border-t border-white/10"
+                className="bg-black/80 backdrop-blur-sm p-3 md:p-4 border-t border-white/10"
               >
-                <div className="max-w-4xl mx-auto flex items-start justify-between gap-4">
-                  <div className="flex-1">
-                    <h2 className="text-lg font-semibold text-white mb-1">
+                <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-4">
+                  <div className="flex-1 min-w-0">
+                    <h2 className="text-base md:text-lg font-semibold text-white mb-1 truncate">
                       {video.title || "Untitled Video"}
                     </h2>
                     {video.description && (
-                      <p className="text-sm text-white/70 mb-2">{video.description}</p>
+                      <p className="text-xs md:text-sm text-white/70 mb-1 line-clamp-2">{video.description}</p>
                     )}
                     <p className="text-xs text-white/50">
                       {formatDate(video.createdAt)}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-shrink-0">
                     {videoUrl && (
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-white hover:bg-white/10"
+                        className="text-white hover:bg-white/10 text-xs md:text-sm h-8 md:h-9"
                         onClick={() => {
                           const a = document.createElement("a");
                           a.href = videoUrl;
@@ -212,8 +212,9 @@ export function VideoModal({
                           a.click();
                         }}
                       >
-                        <Download className="h-4 w-4 mr-2" />
-                        Download
+                        <Download className="h-3 w-3 md:h-4 md:w-4 mr-1 md:mr-2" />
+                        <span className="hidden sm:inline">Download</span>
+                        <span className="sm:hidden">DL</span>
                       </Button>
                     )}
                   </div>

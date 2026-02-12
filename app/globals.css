@@ -67,6 +67,20 @@ body {
   font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
   min-height: 100vh;
   width: 100%;
+  -webkit-text-size-adjust: 100%; /* Prevent font scaling on iOS */
+  -webkit-tap-highlight-color: transparent; /* Remove tap highlight on mobile */
+}
+
+/* Ensure all images and videos are responsive */
+img, video, canvas {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Prevent horizontal overflow on mobile */
+body {
+  overflow-x: hidden;
 }
 
 /* Custom scrollbar */
