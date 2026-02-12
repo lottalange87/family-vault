@@ -224,12 +224,13 @@ async function processSingleUpload(
   // Encrypt thumbnail
   updateUploadStatus(set, upload.id, { progress: 10 });
   let encryptedThumbnail: string | undefined;
+  let thumbnailIV: Uint8Array | undefined;
   try {
     const thumbnailBlob = await generateThumbnail(upload.file);
     if (thumbnailBlob) {
       const thumbBuffer = await thumbnailBlob.arrayBuffer();
-      const thumbIV = generateIV();
-      const thumbEncrypted = await encryptData(thumbBuffer, vault.masterKey, thumbIV);
+      thumbnailIV = generateIV();
+      const thumbEncrypted = await encryptData(thumbBuffer, vault.masterKey, thumbnailIV);
       encryptedThumbnail = arrayBufferToBase64(thumbEncrypted);
       console.log("[Upload v2] Thumbnail encrypted");
     }
@@ -257,9 +258,9 @@ async function processSingleUpload(
       encryptedMetadata: {
         encryptedFilename: arrayBufferToBase64(encryptedFilename),
         wrappedFileKey: arrayBufferToBase64(combinedWrappedKey),
-        iv: arrayBufferToBase64(generateChunkIV(0)), // First chunk IV (for reference)
+        iv: arrayBufferToBase64(generateChunkIV(0)),
         filenameIv: arrayBufferToBase64(filenameIV),
-        thumbnailIv: arrayBufferToBase64(filenameIV), // Use filename IV for thumbnail (stored separately)
+        thumbnailIv: thumbnailIV ? arrayBufferToBase64(thumbnailIV) : null,
         metadataIv: arrayBufferToBase64(metadataIV),
         fileSize: upload.file.size,
         mimeType: upload.file.type,
