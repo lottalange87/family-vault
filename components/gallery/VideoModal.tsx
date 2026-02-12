@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
   X,
@@ -50,142 +50,123 @@ export function VideoModal({
 }: VideoModalProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loadingText, setLoadingText] = useState("Initializing...");
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [progress, setProgress] = useState({ loaded: 0, total: 0 });
   
   const videoRef = useRef<HTMLVideoElement>(null);
-  const initializedRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
   
   const masterKey = useVault.getState().masterKey;
 
-  // Single useEffect for initialization - runs only when isOpen becomes true
   useEffect(() => {
-    if (!isOpen || initializedRef.current) return;
+    if (!isOpen || !video?.id || !masterKey) {
+      if (!isOpen) {
+        if (videoUrl) URL.revokeObjectURL(videoUrl);
+        setVideoUrl(null);
+        setError(null);
+        setProgress({ loaded: 0, total: 0 });
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
+      }
+      return;
+    }
     
-    const initializePlayer = async () => {
-      if (!video?.id || !masterKey || !videoRef.current) return;
-      
-      console.log('[VideoModal] Initializing player for', video.id);
-      initializedRef.current = true;
+    let isMounted = true;
+    
+    const loadVideo = async () => {
       setIsLoading(true);
       setError(null);
+      
+      abortControllerRef.current = new AbortController();
+      const { signal } = abortControllerRef.current;
       
       try {
         // Decrypt metadata first
         await onDecrypt();
+        if (!isMounted || signal.aborted) return;
         
-        // Setup streaming
-        setLoadingText("Loading manifest...");
-        const manifestRes = await fetch(`/api/stream/${video.id}/manifest`);
+        // Load manifest
+        const manifestRes = await fetch(`/api/stream/${video.id}/manifest`, { signal });
         if (!manifestRes.ok) throw new Error("Failed to load manifest");
         const manifest = await manifestRes.json();
         
-        console.log('[Stream] Manifest:', manifest);
+        if (!isMounted || signal.aborted) return;
+        setProgress({ loaded: 0, total: manifest.totalChunks });
         
         // Unwrap file key
-        setLoadingText("Preparing decryption...");
         const wrappedKeyData = base64ToUint8Array(manifest.wrappedFileKey);
-        const wrappedKey = wrappedKeyData.slice(0, 48);
-        const keyWrapIV = wrappedKeyData.slice(48, 60);
-        const fileKey = await unwrapFileKey(wrappedKey, masterKey, keyWrapIV);
+        const fileKey = await unwrapFileKey(
+          wrappedKeyData.slice(0, 48),
+          masterKey,
+          wrappedKeyData.slice(48, 60)
+        );
         
-        // Create MediaSource
-        const mediaSource = new MediaSource();
-        const url = URL.createObjectURL(mediaSource);
-        videoRef.current.src = url;
+        // Download and decrypt all chunks
+        const chunks: Uint8Array[] = [];
         
-        // Wait for sourceopen
-        await new Promise<void>((resolve, reject) => {
-          mediaSource.addEventListener('sourceopen', () => resolve(), { once: true });
-          mediaSource.addEventListener('error', reject, { once: true });
-          setTimeout(() => reject(new Error('MediaSource timeout')), 10000);
-        });
-        
-        // Add SourceBuffer
-        let mimeType = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
-        if (!MediaSource.isTypeSupported(mimeType)) {
-          throw new Error('MIME type not supported');
+        for (let i = 0; i < manifest.totalChunks; i++) {
+          if (!isMounted || signal.aborted) return;
+          
+          const res = await fetch(`/api/stream/${video.id}/chunk/${i}`, { signal });
+          if (!res.ok) throw new Error(`Failed to load chunk ${i}`);
+          
+          const encrypted = await res.arrayBuffer();
+          const iv = generateChunkIV(i);
+          const decrypted = await decryptData(encrypted, fileKey, iv);
+          chunks.push(new Uint8Array(decrypted));
+          
+          setProgress({ loaded: i + 1, total: manifest.totalChunks });
         }
         
-        const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
-        sourceBuffer.mode = 'segments';
+        if (!isMounted || signal.aborted) return;
         
-        // Load and append chunks
-        setLoadingText("Loading video...");
-        
-        const loadChunk = async (index: number): Promise<Uint8Array | null> => {
-          try {
-            const res = await fetch(`/api/stream/${video.id}/chunk/${index}`);
-            if (!res.ok) return null;
-            const encrypted = await res.arrayBuffer();
-            const iv = generateChunkIV(index);
-            const decrypted = await decryptData(encrypted, fileKey, iv);
-            return new Uint8Array(decrypted);
-          } catch (e) {
-            console.error(`[Stream] Chunk ${index} failed:`, e);
-            return null;
-          }
-        };
-        
-        // Load first 3 chunks
-        const initialChunks: Uint8Array[] = [];
-        for (let i = 0; i < Math.min(3, manifest.totalChunks); i++) {
-          const chunk = await loadChunk(i);
-          if (chunk) initialChunks.push(chunk);
+        // Combine chunks and create blob URL
+        const totalSize = chunks.reduce((sum, c) => sum + c.length, 0);
+        const combined = new Uint8Array(totalSize);
+        let offset = 0;
+        for (const chunk of chunks) {
+          combined.set(chunk, offset);
+          offset += chunk.length;
         }
         
-        // Append initial chunks
-        for (const chunk of initialChunks) {
-          sourceBuffer.appendBuffer(chunk);
-          await new Promise(r => sourceBuffer.addEventListener('updateend', r, { once: true }));
-        }
+        const blob = new Blob([combined], { type: manifest.mimeType || 'video/mp4' });
+        const url = URL.createObjectURL(blob);
         
-        // Start playback
+        setVideoUrl(url);
         setIsLoading(false);
-        videoRef.current.play().catch(() => {});
         
-        // Load remaining chunks in background
-        let nextIndex = initialChunks.length;
-        const loadRemaining = async () => {
-          while (nextIndex < manifest.totalChunks) {
-            const chunk = await loadChunk(nextIndex++);
-            if (chunk) {
-              sourceBuffer.appendBuffer(chunk);
-              await new Promise(r => sourceBuffer.addEventListener('updateend', r, { once: true }));
-            }
-          }
-          // End stream
-          try {
-            mediaSource.endOfStream();
-          } catch (e) {}
-        };
-        loadRemaining();
+        // Auto-play
+        setTimeout(() => {
+          videoRef.current?.play().catch(() => {});
+        }, 100);
         
       } catch (err) {
-        console.error('[VideoModal] Error:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load video');
-        setIsLoading(false);
+        if (!signal.aborted) {
+          console.error('[VideoModal] Error:', err);
+          setError(err instanceof Error ? err.message : 'Failed to load video');
+          setIsLoading(false);
+        }
       }
     };
     
-    initializePlayer();
+    loadVideo();
     
     return () => {
-      console.log('[VideoModal] Cleanup');
-      if (videoRef.current) {
-        videoRef.current.pause();
-        videoRef.current.src = '';
+      isMounted = false;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
     };
-  }, [isOpen]); // Only run when isOpen changes
-  
-  // Reset initialization when modal closes
+  }, [isOpen, video?.id, masterKey, onDecrypt]);
+
+  // Cleanup URL on unmount
   useEffect(() => {
-    if (!isOpen) {
-      initializedRef.current = false;
-      setIsLoading(false);
-      setError(null);
-    }
-  }, [isOpen]);
+    return () => {
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+    };
+  }, [videoUrl]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -230,29 +211,25 @@ export function VideoModal({
 
         <div className="relative w-full h-full flex flex-col" onClick={(e) => e.stopPropagation()}>
           <div className="flex-1 flex items-center justify-center p-4 pt-16">
-            {(isLoading || error) ? (
+            {isLoading ? (
               <div className="flex flex-col items-center text-white">
-                {isLoading ? (
-                  <>
-                    <Loader2 className="h-12 w-12 animate-spin mb-4" />
-                    <p>{loadingText}</p>
-                  </>
-                ) : (
-                  <>
-                    <Lock className="h-16 w-16 mb-4 text-red-400" />
-                    <p>{error}</p>
-                  </>
-                )}
+                <Loader2 className="h-12 w-12 animate-spin mb-4" />
+                <p>Loading video... {progress.loaded}/{progress.total} chunks</p>
               </div>
-            ) : null}
-            
-            <video 
-              ref={videoRef} 
-              controls 
-              autoPlay
-              className="max-w-full max-h-full rounded-lg"
-              style={{ display: isLoading || error ? 'none' : 'block' }}
-            />
+            ) : error ? (
+              <div className="flex flex-col items-center text-white">
+                <Lock className="h-16 w-16 mb-4 text-red-400" />
+                <p>{error}</p>
+              </div>
+            ) : (
+              <video 
+                ref={videoRef} 
+                src={videoUrl || undefined}
+                controls 
+                autoPlay
+                className="max-w-full max-h-full rounded-lg"
+              />
+            )}
           </div>
 
           <motion.div 
