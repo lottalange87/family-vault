@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useVault } from "@/hooks/useVault";
-import { decryptData, base64ToUint8Array, unwrapFileKey } from "@/lib/crypto";
+import { decryptFile, base64ToUint8Array } from "@/lib/crypto";
 
 interface VideoModalProps {
   video: {
@@ -45,13 +45,10 @@ export function VideoModal({
   const [error, setError] = useState<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isDecryptingMetadata, setIsDecryptingMetadata] = useState(false);
-  const [chunksLoaded, setChunksLoaded] = useState(0);
-  const [totalChunks, setTotalChunks] = useState(0);
+  const [downloadProgress, setDownloadProgress] = useState(0);
   
-  const videoRef = useRef<HTMLVideoElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const fileKeyRef = useRef<CryptoKey | null>(null);
-  const chunksRef = useRef<Uint8Array[]>([]);
+  const hasInitializedRef = useRef(false);
 
   const masterKey = useVault.getState().masterKey;
 
@@ -66,68 +63,11 @@ export function VideoModal({
       URL.revokeObjectURL(videoUrl);
       setVideoUrl(null);
     }
-    chunksRef.current = [];
-    fileKeyRef.current = null;
-    setChunksLoaded(0);
-    setTotalChunks(0);
+    setDownloadProgress(0);
     setError(null);
   }, [videoUrl]);
 
-  // Fetch and decrypt a single chunk
-  const fetchAndDecryptChunk = async (
-    fileId: string, 
-    chunkIndex: number, 
-    manifest: any,
-    signal: AbortSignal
-  ): Promise<Uint8Array | null> => {
-    console.log(`[VideoModal] Fetching chunk ${chunkIndex}`);
-    
-    try {
-      const response = await fetch(`/api/files/${fileId}/chunks/${chunkIndex}`);
-      if (!response.ok) {
-        throw new Error(`Failed to load chunk ${chunkIndex}: ${response.status}`);
-      }
-
-      if (signal.aborted) return null;
-
-      const encryptedData = await response.arrayBuffer();
-      console.log(`[VideoModal] Chunk ${chunkIndex} received:`, encryptedData.byteLength, 'bytes');
-      
-      if (signal.aborted) return null;
-
-      // Get or unwrap file key
-      if (!fileKeyRef.current) {
-        const wrappedKeyData = base64ToUint8Array(manifest.wrappedFileKey);
-        
-        // Extract components from combined wrappedKey format:
-        // [wrappedKey (48 bytes)] [keyWrapIV (12 bytes)] [fileIV (12 bytes)]
-        const WRAPPED_KEY_LENGTH = 48; // 32 bytes key + 16 bytes auth tag
-        const IV_LENGTH = 12;
-        
-        const wrappedKey = wrappedKeyData.slice(0, WRAPPED_KEY_LENGTH);
-        const keyWrapIV = wrappedKeyData.slice(WRAPPED_KEY_LENGTH, WRAPPED_KEY_LENGTH + IV_LENGTH);
-        
-        console.log('[VideoModal] Unwrapping file key...');
-        fileKeyRef.current = await unwrapFileKey(wrappedKey, masterKey!, keyWrapIV);
-        console.log('[VideoModal] File key unwrapped successfully');
-      }
-
-      if (signal.aborted) return null;
-
-      // Decrypt chunk
-      // Note: All chunks use same IV for now (not ideal but works)
-      const iv = base64ToUint8Array(manifest.iv);
-      const decrypted = await decryptData(encryptedData, fileKeyRef.current, iv);
-      console.log(`[VideoModal] Chunk ${chunkIndex} decrypted:`, decrypted.byteLength, 'bytes');
-      
-      return new Uint8Array(decrypted);
-    } catch (error) {
-      console.error(`[VideoModal] Error loading chunk ${chunkIndex}:`, error);
-      return null;
-    }
-  };
-
-  // Load video progressively
+  // Load video using legacy stream endpoint
   const loadVideo = useCallback(async (fileId: string) => {
     console.log('[VideoModal] loadVideo called for', fileId);
     
@@ -137,57 +77,91 @@ export function VideoModal({
       return;
     }
 
-    // Create abort controller for this load operation
     abortControllerRef.current = new AbortController();
     const { signal } = abortControllerRef.current;
 
     try {
-      // Step 1: Fetch manifest
-      console.log('[VideoModal] Fetching manifest...');
-      const manifestRes = await fetch(`/api/files/${fileId}/manifest`);
-      if (!manifestRes.ok) {
-        // Fallback to legacy stream endpoint if manifest not available
-        console.log('[VideoModal] Manifest not available, using legacy stream');
-        await loadLegacyVideo(fileId, signal);
-        return;
+      // Use the stream endpoint which combines all chunks server-side
+      console.log('[VideoModal] Fetching encrypted video...');
+      const response = await fetch(`/api/files/${fileId}/stream`, {
+        signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to load video: ${response.status}`);
       }
 
-      const manifest = await manifestRes.json();
-      console.log('[VideoModal] Manifest:', manifest);
-      setTotalChunks(manifest.totalChunks);
+      const totalSize = parseInt(response.headers.get('Content-Length') || '0');
+      console.log('[VideoModal] Total size:', totalSize);
 
-      // Step 2: Load first few chunks for immediate playback
-      const initialChunkCount = Math.min(3, manifest.totalChunks);
-      console.log(`[VideoModal] Loading initial ${initialChunkCount} chunks...`);
+      // Read the response with progress tracking
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("Failed to get response reader");
+      }
 
-      for (let i = 0; i < initialChunkCount; i++) {
-        if (signal.aborted) return;
+      const chunks: Uint8Array[] = [];
+      let receivedSize = 0;
+
+      while (true) {
+        if (signal.aborted) {
+          reader.cancel();
+          return;
+        }
+
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        chunks.push(value);
+        receivedSize += value.length;
         
-        const chunk = await fetchAndDecryptChunk(fileId, i, manifest, signal);
-        if (chunk) {
-          chunksRef.current.push(chunk);
-          setChunksLoaded(prev => prev + 1);
+        if (totalSize > 0) {
+          const progress = Math.round((receivedSize / totalSize) * 100);
+          setDownloadProgress(progress);
         }
       }
 
+      console.log('[VideoModal] Download complete:', receivedSize, 'bytes');
+
       if (signal.aborted) return;
 
-      // Step 3: Create video URL from initial chunks
-      if (chunksRef.current.length === 0) {
-        setError("Failed to load video data");
-        setIsLoading(false);
-        return;
+      // Combine chunks
+      const encryptedData = new Uint8Array(receivedSize);
+      let offset = 0;
+      for (const chunk of chunks) {
+        encryptedData.set(chunk, offset);
+        offset += chunk.length;
       }
 
-      console.log('[VideoModal] Creating blob from', chunksRef.current.length, 'chunks');
-      const blob = new Blob(chunksRef.current, { type: manifest.mimeType || 'video/mp4' });
+      // Get headers
+      const iv = response.headers.get('X-Encrypted-IV');
+      const wrappedFileKey = response.headers.get('X-Wrapped-File-Key');
+
+      if (!iv || !wrappedFileKey) {
+        throw new Error("Missing encryption headers");
+      }
+
+      console.log('[VideoModal] Decrypting video...');
+      setDownloadProgress(-1); // Show "decrypting" state
+
+      // Decrypt using decryptFile which handles the wrapped key format
+      const decrypted = await decryptFile(
+        encryptedData,
+        base64ToUint8Array(wrappedFileKey),
+        base64ToUint8Array(iv),
+        masterKey
+      );
+
+      console.log('[VideoModal] Decryption complete:', decrypted.byteLength, 'bytes');
+
+      if (signal.aborted) return;
+
+      // Create blob and play
+      const blob = new Blob([decrypted], { type: 'video/mp4' });
       const url = URL.createObjectURL(blob);
       setVideoUrl(url);
       setIsLoading(false);
-      console.log('[VideoModal] Video URL created, starting playback');
-
-      // Step 4: Load remaining chunks in background
-      loadRemainingChunks(fileId, manifest, signal);
+      setDownloadProgress(0);
       
     } catch (error) {
       console.error('[VideoModal] Load error:', error);
@@ -198,117 +172,14 @@ export function VideoModal({
     }
   }, [masterKey]);
 
-  // Legacy loading (for files without chunks)
-  const loadLegacyVideo = async (fileId: string, signal: AbortSignal) => {
-    console.log('[VideoModal] Using legacy stream endpoint');
-    try {
-      const response = await fetch(`/api/files/${fileId}/stream`);
-      if (!response.ok) {
-        throw new Error(`Failed to load video: ${response.status}`);
-      }
-
-      const encryptedData = await response.arrayBuffer();
-      console.log('[VideoModal] Legacy data received:', encryptedData.byteLength, 'bytes');
-
-      if (signal.aborted) return;
-
-      // Get IV and wrapped key from headers
-      const iv = response.headers.get('X-Encrypted-IV');
-      const wrappedKey = response.headers.get('X-Wrapped-File-Key');
-
-      if (!iv || !wrappedKey) {
-        throw new Error("Missing encryption headers");
-      }
-
-      // Unwrap file key - extract components from combined format
-      const wrappedKeyData = base64ToUint8Array(wrappedKey);
-      const WRAPPED_KEY_LENGTH = 48; // 32 bytes key + 16 bytes auth tag
-      const IV_LENGTH = 12;
-      
-      const wrappedKeyBytes = wrappedKeyData.slice(0, WRAPPED_KEY_LENGTH);
-      const keyWrapIV = wrappedKeyData.slice(WRAPPED_KEY_LENGTH, WRAPPED_KEY_LENGTH + IV_LENGTH);
-      const fileIV = wrappedKeyData.slice(WRAPPED_KEY_LENGTH + IV_LENGTH);
-      
-      console.log('[VideoModal] Unwrapping legacy file key...');
-      const fileKey = await unwrapFileKey(wrappedKeyBytes, masterKey!, keyWrapIV);
-      console.log('[VideoModal] Legacy file key unwrapped');
-
-      if (signal.aborted) return;
-
-      // Decrypt entire file using the fileIV from the combined data
-      console.log('[VideoModal] Decrypting legacy file...');
-      const decrypted = await decryptData(encryptedData, fileKey, fileIV);
-      console.log('[VideoModal] Legacy file decrypted:', decrypted.byteLength, 'bytes');
-
-      if (signal.aborted) return;
-
-      const blob = new Blob([decrypted], { type: 'video/mp4' });
-      const url = URL.createObjectURL(blob);
-      setVideoUrl(url);
-      setIsLoading(false);
-    } catch (error) {
-      console.error('[VideoModal] Legacy load error:', error);
-      throw error;
-    }
-  };
-
-  // Load remaining chunks in background
-  const loadRemainingChunks = async (fileId: string, manifest: any, signal: AbortSignal) => {
-    console.log('[VideoModal] Loading remaining chunks in background...');
-    
-    for (let i = chunksRef.current.length; i < manifest.totalChunks; i++) {
-      if (signal.aborted) {
-        console.log('[VideoModal] Aborted, stopping background load');
-        return;
-      }
-
-      const chunk = await fetchAndDecryptChunk(fileId, i, manifest, signal);
-      if (chunk) {
-        chunksRef.current.push(chunk);
-        setChunksLoaded(prev => prev + 1);
-        
-        // Update blob URL every 5 chunks or at the end
-        if (i % 5 === 0 || i === manifest.totalChunks - 1) {
-          console.log(`[VideoModal] Updating video blob (${chunksRef.current.length} chunks)`);
-          const currentTime = videoRef.current?.currentTime || 0;
-          const wasPlaying = !videoRef.current?.paused;
-          
-          const blob = new Blob(chunksRef.current, { type: manifest.mimeType || 'video/mp4' });
-          const newUrl = URL.createObjectURL(blob);
-          
-          setVideoUrl(prev => {
-            if (prev) URL.revokeObjectURL(prev);
-            return newUrl;
-          });
-
-          // Restore playback position
-          setTimeout(() => {
-            if (videoRef.current) {
-              videoRef.current.currentTime = currentTime;
-              if (wasPlaying) {
-                videoRef.current.play().catch(e => console.log('[VideoModal] Autoplay failed:', e));
-              }
-            }
-          }, 100);
-        }
-      }
-    }
-    
-    console.log('[VideoModal] All chunks loaded');
-  };
-
   // Initialize on open - using ref to avoid dependency loop
-  const hasInitializedRef = useRef(false);
-  
   useEffect(() => {
-    // Reset initialization when modal closes
     if (!isOpen) {
       hasInitializedRef.current = false;
       cleanup();
       return;
     }
     
-    // Only initialize once per open
     if (hasInitializedRef.current) {
       console.log('[VideoModal] Already initialized, skipping');
       return;
@@ -320,11 +191,9 @@ export function VideoModal({
       setIsLoading(true);
       setIsDecryptingMetadata(true);
       
-      // First decrypt metadata (thumbnail, title)
       onDecrypt().then(() => {
         console.log('[VideoModal] Metadata decrypted');
         setIsDecryptingMetadata(false);
-        // Then start loading video
         loadVideo(video.id);
       }).catch(err => {
         console.error('[VideoModal] Metadata decryption failed:', err);
@@ -332,7 +201,7 @@ export function VideoModal({
         setIsLoading(false);
       });
     }
-  }, [isOpen, video?.id, masterKey]); // Removed onDecrypt, loadVideo, cleanup from deps
+  }, [isOpen, video?.id, masterKey]);
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -439,12 +308,17 @@ export function VideoModal({
                   <p>
                     {isDecryptingMetadata 
                       ? "Decrypting metadata..." 
-                      : "Loading video..."}
+                      : downloadProgress === -1
+                        ? "Decrypting video..."
+                        : "Downloading video..."}
                   </p>
-                  {totalChunks > 0 && (
-                    <p className="text-sm text-white/50 mt-2">
-                      Loading chunks {chunksLoaded} / {totalChunks}
-                    </p>
+                  {downloadProgress > 0 && downloadProgress <= 100 && (
+                    <div className="w-64 h-2 bg-white/20 rounded-full mt-4 overflow-hidden">
+                      <div 
+                        className="h-full bg-primary transition-all duration-300"
+                        style={{ width: `${downloadProgress}%` }}
+                      />
+                    </div>
                   )}
                 </div>
               ) : error ? (
@@ -454,12 +328,10 @@ export function VideoModal({
                 </div>
               ) : videoUrl ? (
                 <video
-                  ref={videoRef}
                   src={videoUrl}
                   controls
                   autoPlay
                   className="max-w-full max-h-full rounded-lg"
-                  onError={(e) => console.error('[VideoModal] Video element error:', e)}
                 />
               ) : (
                 <div className="flex flex-col items-center text-white">
@@ -487,12 +359,6 @@ export function VideoModal({
                     <p className="text-xs text-white/50">
                       {formatDate(video.createdAt)}
                     </p>
-                    {totalChunks > 0 && (
-                      <p className="text-xs text-white/30 mt-1">
-                        Loaded {chunksLoaded} / {totalChunks} chunks
-                        {chunksLoaded < totalChunks && " (loading more...)"}
-                      </p>
-                    )}
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     {videoUrl && (
