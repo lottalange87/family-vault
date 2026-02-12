@@ -24,7 +24,7 @@ interface RateLimitOptions {
 // Default rate limits
 const DEFAULT_UPLOAD_LIMIT: RateLimitOptions = {
   windowMs: 60 * 60 * 1000, // 1 hour
-  maxRequests: 10, // 10 uploads per hour
+  maxRequests: 50, // 50 uploads per hour
 };
 
 const DEFAULT_API_LIMIT: RateLimitOptions = {
