@@ -9,6 +9,7 @@ import {
   cleanupTempDir,
   getChunkPath
 } from "@/lib/storage";
+import { stat } from "fs/promises";
 
 // POST /api/upload/complete - Complete chunked upload
 export async function POST(request: NextRequest) {
@@ -68,19 +69,6 @@ export async function POST(request: NextRequest) {
     // Move chunks from temp to permanent storage (for streaming)
     const chunkPaths = await moveChunksToStorage(sessionId, session.fileId, session.totalChunks);
 
-    // Save chunk records to database
-    const now = new Date().toISOString();
-    for (let i = 0; i < chunkPaths.length; i++) {
-      await db.insert(encryptedChunks).values({
-        id: crypto.randomUUID(),
-        fileId: session.fileId,
-        chunkIndex: i,
-        chunkPath: chunkPaths[i],
-        chunkSize: chunkPaths[i].length, // This should be actual file size
-        createdAt: now,
-      });
-    }
-
     // Save encrypted thumbnail if present
     let thumbnailPath: string | undefined;
     if (encryptedMeta.encryptedThumbnail) {
@@ -97,7 +85,9 @@ export async function POST(request: NextRequest) {
     // Calculate total file size from chunks
     const totalFileSize = encryptedMeta.fileSize || (session.totalChunks * 5 * 1024 * 1024); // Fallback estimate
 
-    // Create file record
+    const now = new Date().toISOString();
+
+    // Create file record FIRST (needed for foreign key)
     await db.insert(encryptedFiles).values({
       id: session.fileId,
       encryptedFilename: encryptedMeta.encryptedFilename,
@@ -122,6 +112,21 @@ export async function POST(request: NextRequest) {
       iv: encryptedMeta.metadataIv || encryptedMeta.iv,
       updatedAt: now,
     });
+
+    // Save chunk records to database (AFTER file record exists)
+    for (let i = 0; i < chunkPaths.length; i++) {
+      // Get actual file size
+      const stats = await stat(chunkPaths[i]);
+      
+      await db.insert(encryptedChunks).values({
+        id: crypto.randomUUID(),
+        fileId: session.fileId,
+        chunkIndex: i,
+        chunkPath: chunkPaths[i],
+        chunkSize: stats.size,
+        createdAt: now,
+      });
+    }
 
     // Clean up temp files
     await cleanupTempDir(sessionId);

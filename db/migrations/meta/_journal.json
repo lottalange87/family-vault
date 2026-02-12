@@ -15,6 +15,13 @@
       "when": 1770878451605,
       "tag": "0001_round_scalphunter",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1770900521286,
+      "tag": "0002_absent_matthew_murdock",
+      "breakpoints": true
     }
   ]
 }
