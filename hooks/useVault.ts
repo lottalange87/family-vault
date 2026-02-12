@@ -27,6 +27,7 @@ interface VaultState {
   salt: string | null;
   isLoading: boolean;
   error: string | null;
+  hasHydrated: boolean; // Track if store has hydrated from storage
 
   // Actions
   checkInitialization: () => Promise<void>;
@@ -35,6 +36,7 @@ interface VaultState {
   lockVault: () => void;
   restoreFromSession: () => Promise<void>;
   clearError: () => void;
+  setHasHydrated: (hydrated: boolean) => void;
 }
 
 export const useVault = create<VaultState>()(
@@ -46,6 +48,9 @@ export const useVault = create<VaultState>()(
       salt: null,
       isLoading: false,
       error: null,
+      hasHydrated: false,
+
+      setHasHydrated: (hydrated: boolean) => set({ hasHydrated: hydrated }),
 
       checkInitialization: async () => {
         try {
@@ -189,6 +194,11 @@ export const useVault = create<VaultState>()(
         isInitialized: state.isInitialized,
         salt: state.salt,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.setHasHydrated(true);
+        }
+      },
     }
   )
 );

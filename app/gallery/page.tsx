@@ -22,7 +22,7 @@ import { useState } from "react";
 
 export default function GalleryPage() {
   const router = useRouter();
-  const { isUnlocked, lockVault, isLoading: vaultLoading } = useVault();
+  const { isUnlocked, lockVault, isLoading: vaultLoading, hasHydrated } = useVault();
   const {
     videos,
     isLoading,
@@ -41,10 +41,10 @@ export default function GalleryPage() {
 
   // Protect route - redirect immediately if not unlocked
   useEffect(() => {
-    if (isClient && !vaultLoading && !isUnlocked) {
+    if (isClient && hasHydrated && !vaultLoading && !isUnlocked) {
       router.replace("/");
     }
-  }, [isUnlocked, vaultLoading, router, isClient]);
+  }, [isUnlocked, vaultLoading, router, isClient, hasHydrated]);
 
   // Fetch gallery on mount
   useEffect(() => {
@@ -98,7 +98,7 @@ export default function GalleryPage() {
   };
 
   // Show loading or nothing while checking auth state
-  if (!isClient || vaultLoading) {
+  if (!isClient || !hasHydrated || vaultLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
