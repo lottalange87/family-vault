@@ -6,15 +6,13 @@ import { uploadCompleteSchema } from "@/lib/validation";
 import { 
   moveChunksToStorage, 
   saveEncryptedThumbnail,
-  cleanupTempDir,
-  getChunkPath
+  cleanupTempDir
 } from "@/lib/storage";
 import { stat } from "fs/promises";
 
 // POST /api/upload/complete - Complete chunked upload
 export async function POST(request: NextRequest) {
   try {
-    // Parse and validate request body
     const body = await request.json();
     const parseResult = uploadCompleteSchema.safeParse(body);
 
@@ -27,7 +25,6 @@ export async function POST(request: NextRequest) {
 
     const { sessionId } = parseResult.data;
 
-    // Get session
     const session = await db.query.uploadSessions.findFirst({
       where: eq(uploadSessions.id, sessionId),
     });
@@ -39,19 +36,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if session expired
     if (new Date() > new Date(session.expiresAt)) {
-      // Clean up expired session
       await cleanupTempDir(sessionId);
       await db.delete(uploadSessions).where(eq(uploadSessions.id, sessionId));
-      
       return NextResponse.json(
         { error: "Upload session expired" },
         { status: 410 }
       );
     }
 
-    // Check if all chunks received
     if (session.chunksReceived < session.totalChunks) {
       return NextResponse.json(
         { 
@@ -63,41 +56,37 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse encrypted metadata
     const encryptedMeta = JSON.parse(session.encryptedMetadata || "{}");
 
-    // Move chunks from temp to permanent storage (for streaming)
+    // Move chunks to permanent storage
     const chunkPaths = await moveChunksToStorage(sessionId, session.fileId, session.totalChunks);
 
-    // Save encrypted thumbnail if present
+    // Save thumbnail if present
     let thumbnailPath: string | undefined;
     if (encryptedMeta.encryptedThumbnail) {
       const thumbnailBuffer = Buffer.from(encryptedMeta.encryptedThumbnail, "base64");
       thumbnailPath = await saveEncryptedThumbnail(session.fileId, thumbnailBuffer);
     }
 
-    // Get current order index (append to end)
+    // Get order index
     const lastFile = await db.query.encryptedFiles.findFirst({
       orderBy: (files, { desc }) => [desc(files.orderIndex)],
     });
     const orderIndex = (lastFile?.orderIndex || 0) + 1;
 
-    // Calculate total file size from chunks
-    const totalFileSize = encryptedMeta.fileSize || (session.totalChunks * 5 * 1024 * 1024); // Fallback estimate
-
     const now = new Date().toISOString();
 
-    // Create file record FIRST (needed for foreign key)
+    // Create file record
     await db.insert(encryptedFiles).values({
       id: session.fileId,
       encryptedFilename: encryptedMeta.encryptedFilename,
-      encryptedBlobPath: "chunked", // Mark as chunked storage
+      encryptedBlobPath: "chunked-streaming", // Mark as streaming-compatible
       encryptedThumbnailPath: thumbnailPath,
       wrappedFileKey: encryptedMeta.wrappedFileKey,
       iv: encryptedMeta.iv,
       filenameIv: encryptedMeta.filenameIv,
       thumbnailIv: encryptedMeta.thumbnailIv,
-      fileSize: totalFileSize,
+      fileSize: encryptedMeta.fileSize,
       mimeType: encryptedMeta.mimeType || "video/mp4",
       orderIndex,
       createdAt: now,
@@ -113,11 +102,9 @@ export async function POST(request: NextRequest) {
       updatedAt: now,
     });
 
-    // Save chunk records to database (AFTER file record exists)
+    // Save chunk records
     for (let i = 0; i < chunkPaths.length; i++) {
-      // Get actual file size
       const stats = await stat(chunkPaths[i]);
-      
       await db.insert(encryptedChunks).values({
         id: crypto.randomUUID(),
         fileId: session.fileId,
@@ -128,21 +115,16 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Clean up temp files
     await cleanupTempDir(sessionId);
     await db.delete(uploadSessions).where(eq(uploadSessions.id, sessionId));
 
-    return NextResponse.json(
-      {
-        success: true,
-        fileId: session.fileId,
-        status: "completed",
-        fileSize: totalFileSize,
-        chunks: session.totalChunks,
-        createdAt: now,
-      },
-      { status: 200 }
-    );
+    return NextResponse.json({
+      success: true,
+      fileId: session.fileId,
+      status: "completed",
+      chunks: session.totalChunks,
+      createdAt: now,
+    }, { status: 200 });
   } catch (error) {
     console.error("Upload complete error:", error);
     return NextResponse.json(

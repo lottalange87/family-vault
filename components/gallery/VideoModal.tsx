@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useVault } from "@/hooks/useVault";
-import { decryptFile, base64ToUint8Array } from "@/lib/crypto";
+import { decryptData, base64ToUint8Array, unwrapFileKey } from "@/lib/crypto";
 
 interface VideoModalProps {
   video: {
@@ -31,6 +31,15 @@ interface VideoModalProps {
   onPrev: () => void;
 }
 
+// Generate IV from chunk index (must match upload logic)
+function generateChunkIV(chunkIndex: number): Uint8Array {
+  const iv = new Uint8Array(12);
+  const view = new DataView(iv.buffer);
+  view.setBigUint64(0, BigInt(chunkIndex), false);
+  view.setUint32(8, 0, false);
+  return iv;
+}
+
 export function VideoModal({
   video,
   isOpen,
@@ -43,34 +52,94 @@ export function VideoModal({
 }: VideoModalProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [isDecryptingMetadata, setIsDecryptingMetadata] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [loadingText, setLoadingText] = useState("Initializing...");
+  const [bufferedChunks, setBufferedChunks] = useState(0);
+  const [totalChunksState, setTotalChunksState] = useState(0);
   
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const mediaSourceRef = useRef<MediaSource | null>(null);
+  const sourceBufferRef = useRef<SourceBuffer | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const hasInitializedRef = useRef(false);
+  const manifestRef = useRef<any>(null);
+  const fileKeyRef = useRef<CryptoKey | null>(null);
+  const chunksQueueRef = useRef<Uint8Array[]>([]);
+  const nextChunkIndexRef = useRef(0);
+  const isAppendingRef = useRef(false);
 
   const masterKey = useVault.getState().masterKey;
 
-  // Cleanup function
   const cleanup = useCallback(() => {
-    console.log('[VideoModal] Cleanup called');
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    if (videoUrl) {
-      URL.revokeObjectURL(videoUrl);
-      setVideoUrl(null);
+    if (sourceBufferRef.current && mediaSourceRef.current?.readyState === 'open') {
+      try {
+        sourceBufferRef.current.abort();
+      } catch (e) {}
     }
-    setDownloadProgress(0);
-    setError(null);
-  }, [videoUrl]);
+    if (mediaSourceRef.current?.readyState === 'open') {
+      try {
+        mediaSourceRef.current.endOfStream();
+      } catch (e) {}
+    }
+    mediaSourceRef.current = null;
+    sourceBufferRef.current = null;
+    fileKeyRef.current = null;
+    manifestRef.current = null;
+    chunksQueueRef.current = [];
+    nextChunkIndexRef.current = 0;
+    isAppendingRef.current = false;
+  }, []);
 
-  // Load video using legacy stream endpoint
-  const loadVideo = useCallback(async (fileId: string) => {
-    console.log('[VideoModal] loadVideo called for', fileId);
-    
+  const fetchAndDecryptChunk = async (chunkIndex: number): Promise<Uint8Array | null> => {
+    if (!fileKeyRef.current || !manifestRef.current) return null;
+
+    try {
+      const response = await fetch(`/api/stream/${manifestRef.current.videoId}/chunk/${chunkIndex}`);
+      if (!response.ok) return null;
+
+      const encryptedData = await response.arrayBuffer();
+      const iv = generateChunkIV(chunkIndex);
+      
+      const decrypted = await decryptData(encryptedData, fileKeyRef.current, iv);
+      return new Uint8Array(decrypted);
+    } catch (error) {
+      console.error(`Failed to decrypt chunk ${chunkIndex}:`, error);
+      return null;
+    }
+  };
+
+  const appendNextChunk = useCallback(async () => {
+    if (isAppendingRef.current || !sourceBufferRef.current || !mediaSourceRef.current) return;
+
+    const sourceBuffer = sourceBufferRef.current;
+    if (sourceBuffer.updating) return;
+
+    if (chunksQueueRef.current.length > 0) {
+      isAppendingRef.current = true;
+      const chunk = chunksQueueRef.current.shift();
+      
+      try {
+        sourceBuffer.appendBuffer(chunk!);
+        setBufferedChunks(prev => prev + 1);
+      } catch (e) {
+        console.error("Append buffer failed:", e);
+      } finally {
+        isAppendingRef.current = false;
+      }
+    } else if (nextChunkIndexRef.current < manifestRef.current?.totalChunks) {
+      // Fetch next chunk
+      const chunkIndex = nextChunkIndexRef.current++;
+      const decrypted = await fetchAndDecryptChunk(chunkIndex);
+      if (decrypted) {
+        chunksQueueRef.current.push(decrypted);
+        appendNextChunk();
+      }
+    }
+  }, []);
+
+  const setupMediaSource = useCallback(async (fileId: string) => {
     if (!masterKey) {
       setError("Vault not unlocked");
       setIsLoading(false);
@@ -81,169 +150,130 @@ export function VideoModal({
     const { signal } = abortControllerRef.current;
 
     try {
-      // Use the stream endpoint which combines all chunks server-side
-      console.log('[VideoModal] Fetching encrypted video...');
-      const response = await fetch(`/api/files/${fileId}/stream`, {
-        signal,
+      // 1. Load manifest
+      setLoadingText("Loading manifest...");
+      const manifestRes = await fetch(`/api/stream/${fileId}/manifest`, { signal });
+      if (!manifestRes.ok) throw new Error("Failed to load manifest");
+      
+      const manifest = await manifestRes.json();
+      manifestRef.current = manifest;
+      setTotalChunksState(manifest.totalChunks);
+      console.log("[Stream] Manifest:", manifest);
+
+      // 2. Unwrap file key
+      setLoadingText("Preparing decryption...");
+      const wrappedKeyData = base64ToUint8Array(manifest.wrappedFileKey);
+      const WRAPPED_KEY_LENGTH = 48;
+      const wrappedKey = wrappedKeyData.slice(0, WRAPPED_KEY_LENGTH);
+      const keyWrapIV = wrappedKeyData.slice(WRAPPED_KEY_LENGTH, WRAPPED_KEY_LENGTH + 12);
+      
+      fileKeyRef.current = await unwrapFileKey(wrappedKey, masterKey, keyWrapIV);
+      console.log("[Stream] File key unwrapped");
+
+      // 3. Create MediaSource
+      const mediaSource = new MediaSource();
+      mediaSourceRef.current = mediaSource;
+
+      const video = videoRef.current;
+      if (!video) throw new Error("Video element not found");
+      video.src = URL.createObjectURL(mediaSource);
+
+      // 4. Wait for MediaSource to open
+      await new Promise<void>((resolve, reject) => {
+        mediaSource.addEventListener('sourceopen', () => resolve(), { once: true });
+        mediaSource.addEventListener('error', reject, { once: true });
       });
 
-      if (!response.ok) {
-        throw new Error(`Failed to load video: ${response.status}`);
-      }
+      // 5. Add SourceBuffer
+      const mimeType = manifest.mimeType || 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+      const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+      sourceBuffer.mode = 'segments';
+      sourceBufferRef.current = sourceBuffer;
 
-      const totalSize = parseInt(response.headers.get('Content-Length') || '0');
-      console.log('[VideoModal] Total size:', totalSize);
-
-      // Read the response with progress tracking
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("Failed to get response reader");
-      }
-
-      const chunks: Uint8Array[] = [];
-      let receivedSize = 0;
-
-      while (true) {
-        if (signal.aborted) {
-          reader.cancel();
-          return;
-        }
-
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        chunks.push(value);
-        receivedSize += value.length;
-        
-        if (totalSize > 0) {
-          const progress = Math.round((receivedSize / totalSize) * 100);
-          setDownloadProgress(progress);
+      // 6. Load initial chunks
+      setLoadingText("Loading initial segments...");
+      const initialCount = Math.min(manifest.initialChunks || 3, manifest.totalChunks);
+      
+      for (let i = 0; i < initialCount; i++) {
+        if (signal.aborted) return;
+        const decrypted = await fetchAndDecryptChunk(i);
+        if (decrypted) {
+          chunksQueueRef.current.push(decrypted);
         }
       }
+      nextChunkIndexRef.current = initialCount;
+      console.log(`[Stream] Loaded ${chunksQueueRef.current.length} initial chunks`);
 
-      console.log('[VideoModal] Download complete:', receivedSize, 'bytes');
+      // 7. Start appending
+      sourceBuffer.addEventListener('updateend', () => {
+        appendNextChunk();
+      });
 
-      if (signal.aborted) return;
+      appendNextChunk();
 
-      // Combine chunks
-      const encryptedData = new Uint8Array(receivedSize);
-      let offset = 0;
-      for (const chunk of chunks) {
-        encryptedData.set(chunk, offset);
-        offset += chunk.length;
-      }
-
-      // Get headers
-      const iv = response.headers.get('X-Encrypted-IV');
-      const wrappedFileKey = response.headers.get('X-Wrapped-File-Key');
-
-      if (!iv || !wrappedFileKey) {
-        throw new Error("Missing encryption headers");
-      }
-
-      console.log('[VideoModal] Decrypting video...');
-      setDownloadProgress(-1); // Show "decrypting" state
-
-      // Decrypt using decryptFile which handles the wrapped key format
-      const decrypted = await decryptFile(
-        encryptedData,
-        base64ToUint8Array(wrappedFileKey),
-        base64ToUint8Array(iv),
-        masterKey
-      );
-
-      console.log('[VideoModal] Decryption complete:', decrypted.byteLength, 'bytes');
-
-      if (signal.aborted) return;
-
-      // Create blob and play
-      const blob = new Blob([decrypted], { type: 'video/mp4' });
-      const url = URL.createObjectURL(blob);
-      setVideoUrl(url);
+      // 8. Start playback
       setIsLoading(false);
-      setDownloadProgress(0);
+      video.play().catch(() => {});
+
+      // 9. Continue loading remaining chunks
+      const loadRemaining = async () => {
+        while (nextChunkIndexRef.current < manifest.totalChunks && !signal.aborted) {
+          const chunkIndex = nextChunkIndexRef.current++;
+          const decrypted = await fetchAndDecryptChunk(chunkIndex);
+          if (decrypted) {
+            chunksQueueRef.current.push(decrypted);
+            appendNextChunk();
+          }
+          // Small delay to not overwhelm
+          await new Promise(r => setTimeout(r, 100));
+        }
+        
+        // Signal end of stream when done
+        if (!signal.aborted && mediaSource.readyState === 'open') {
+          mediaSource.endOfStream();
+        }
+      };
       
+      loadRemaining();
+
     } catch (error) {
-      console.error('[VideoModal] Load error:', error);
       if (!signal.aborted) {
-        setError(error instanceof Error ? error.message : "Failed to load video");
+        console.error("[Stream] Setup error:", error);
+        setError(error instanceof Error ? error.message : "Failed to setup player");
         setIsLoading(false);
       }
     }
-  }, [masterKey]);
+  }, [masterKey, appendNextChunk]);
 
-  // Initialize on open - using ref to avoid dependency loop
+  // Initialize
   useEffect(() => {
-    if (!isOpen) {
-      hasInitializedRef.current = false;
-      cleanup();
-      return;
-    }
-    
-    if (hasInitializedRef.current) {
-      console.log('[VideoModal] Already initialized, skipping');
-      return;
-    }
-    
-    if (video?.id && masterKey) {
-      console.log('[VideoModal] Opening video', video.id);
-      hasInitializedRef.current = true;
+    if (isOpen && video?.id && masterKey) {
       setIsLoading(true);
-      setIsDecryptingMetadata(true);
-      
       onDecrypt().then(() => {
-        console.log('[VideoModal] Metadata decrypted');
-        setIsDecryptingMetadata(false);
-        loadVideo(video.id);
-      }).catch(err => {
-        console.error('[VideoModal] Metadata decryption failed:', err);
-        setError("Failed to decrypt metadata");
-        setIsLoading(false);
+        setupMediaSource(video.id);
       });
     }
+
+    return () => cleanup();
   }, [isOpen, video?.id, masterKey]);
 
-  // Handle keyboard navigation
+  // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isOpen) return;
-      
       switch (e.key) {
-        case "Escape":
-          onClose();
-          break;
-        case "ArrowRight":
-          if (hasNext) onNext();
-          break;
-        case "ArrowLeft":
-          if (hasPrev) onPrev();
-          break;
+        case "Escape": onClose(); break;
+        case "ArrowRight": if (hasNext) onNext(); break;
+        case "ArrowLeft": if (hasPrev) onPrev(); break;
       }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, hasNext, hasPrev, onNext, onPrev, onClose]);
 
-  // Prevent body scroll when modal is open
-  useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [isOpen]);
-
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
+    return date.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   };
 
   return (
@@ -256,128 +286,49 @@ export function VideoModal({
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/95"
           onClick={onClose}
         >
-          {/* Close button */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="absolute top-4 right-4 z-50 text-white hover:bg-white/10"
-            onClick={onClose}
-          >
+          <Button variant="ghost" size="icon" className="absolute top-4 right-4 z-50 text-white hover:bg-white/10" onClick={onClose}>
             <X className="h-6 w-6" />
           </Button>
 
-          {/* Navigation buttons */}
           {hasPrev && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute left-2 md:left-4 top-1/2 -translate-y-1/2 z-50 text-white hover:bg-white/10 h-10 w-10 md:h-12 md:w-12"
-              onClick={(e) => {
-                e.stopPropagation();
-                onPrev();
-              }}
-            >
-              <ChevronLeft className="h-6 w-6 md:h-8 md:w-8" />
+            <Button variant="ghost" size="icon" className="absolute left-2 md:left-4 top-1/2 -translate-y-1/2 z-50 text-white hover:bg-white/10" onClick={(e) => { e.stopPropagation(); onPrev(); }}>
+              <ChevronLeft className="h-8 w-8" />
             </Button>
           )}
 
           {hasNext && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 z-50 text-white hover:bg-white/10 h-10 w-10 md:h-12 md:w-12"
-              onClick={(e) => {
-                e.stopPropagation();
-                onNext();
-              }}
-            >
-              <ChevronRight className="h-6 w-6 md:h-8 md:w-8" />
+            <Button variant="ghost" size="icon" className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 z-50 text-white hover:bg-white/10" onClick={(e) => { e.stopPropagation(); onNext(); }}>
+              <ChevronRight className="h-8 w-8" />
             </Button>
           )}
 
-          {/* Content */}
-          <div
-            className="relative w-full h-full flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Video container */}
+          <div className="relative w-full h-full flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex-1 flex items-center justify-center p-4 pt-16">
-              {isLoading || isDecryptingMetadata ? (
+              {isLoading ? (
                 <div className="flex flex-col items-center text-white">
                   <Loader2 className="h-12 w-12 animate-spin mb-4" />
-                  <p>
-                    {isDecryptingMetadata 
-                      ? "Decrypting metadata..." 
-                      : downloadProgress === -1
-                        ? "Decrypting video..."
-                        : "Downloading video..."}
-                  </p>
-                  {downloadProgress > 0 && downloadProgress <= 100 && (
-                    <div className="w-64 h-2 bg-white/20 rounded-full mt-4 overflow-hidden">
-                      <div 
-                        className="h-full bg-primary transition-all duration-300"
-                        style={{ width: `${downloadProgress}%` }}
-                      />
-                    </div>
+                  <p>{loadingText}</p>
+                  {bufferedChunks > 0 && (
+                    <p className="text-sm text-white/50 mt-2">Buffered {bufferedChunks} / {totalChunksState} segments</p>
                   )}
                 </div>
               ) : error ? (
                 <div className="flex flex-col items-center text-white">
-                  <Lock className="h-16 w-16 mb-4 opacity-50 text-red-400" />
+                  <Lock className="h-16 w-16 mb-4 text-red-400" />
                   <p>{error}</p>
                 </div>
-              ) : videoUrl ? (
-                <video
-                  src={videoUrl}
-                  controls
-                  autoPlay
-                  className="max-w-full max-h-full rounded-lg"
-                />
               ) : (
-                <div className="flex flex-col items-center text-white">
-                  <Lock className="h-16 w-16 mb-4 opacity-50" />
-                  <p>No video URL</p>
-                </div>
+                <video ref={videoRef} controls autoPlay className="max-w-full max-h-full rounded-lg" />
               )}
             </div>
 
-            {/* Info bar */}
             {video && (
-              <motion.div
-                initial={{ y: 20, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                className="bg-black/80 backdrop-blur-sm p-3 md:p-4 border-t border-white/10"
-              >
-                <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-4">
-                  <div className="flex-1 min-w-0">
-                    <h2 className="text-base md:text-lg font-semibold text-white mb-1 truncate">
-                      {video.title || "Untitled Video"}
-                    </h2>
-                    {video.description && (
-                      <p className="text-xs md:text-sm text-white/70 mb-1 line-clamp-2">{video.description}</p>
-                    )}
-                    <p className="text-xs text-white/50">
-                      {formatDate(video.createdAt)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {videoUrl && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-white hover:bg-white/10 text-xs md:text-sm h-8 md:h-9"
-                        onClick={() => {
-                          const a = document.createElement("a");
-                          a.href = videoUrl;
-                          a.download = `${video.title || "video"}.mp4`;
-                          a.click();
-                        }}
-                      >
-                        <Download className="h-3 w-3 md:h-4 md:w-4 mr-1 md:mr-2" />
-                        <span className="hidden sm:inline">Download</span>
-                        <span className="sm:hidden">DL</span>
-                      </Button>
-                    )}
+              <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="bg-black/80 backdrop-blur-sm p-4 border-t border-white/10">
+                <div className="max-w-4xl mx-auto flex justify-between items-center">
+                  <div>
+                    <h2 className="text-lg font-semibold text-white">{video.title || "Untitled"}</h2>
+                    <p className="text-sm text-white/50">{formatDate(video.createdAt)}</p>
+                    <p className="text-xs text-white/30 mt-1">Streamed with per-segment encryption</p>
                   </div>
                 </div>
               </motion.div>
