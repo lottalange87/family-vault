@@ -557,6 +557,13 @@ export function VideoModal({
       return;
     }
 
+    // Prevent duplicate initialization for same video
+    if (videoIdRef.current === video.id) {
+      console.log("[VideoModal] Already initialized for this video, skipping...");
+      return;
+    }
+    videoIdRef.current = video.id;
+
     let isMounted = true;
     
     const initializePlayer = async () => {
@@ -597,9 +604,11 @@ export function VideoModal({
     return () => {
       console.log("[VideoModal] useEffect cleanup");
       isMounted = false;
+      videoIdRef.current = null; // Reset so next video can initialize
       cleanup();
     };
-  }, [isOpen, video?.id, masterKey, cleanup, initializeMseStream]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, video?.id]); // Intentionally excluding masterKey, cleanup, initializeMseStream to prevent loops
 
   // Keyboard navigation
   useEffect(() => {
