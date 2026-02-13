@@ -15,7 +15,7 @@ export const uploadInitSchema = z.object({
   encryptedMetadata: z.object({
     encryptedFilename: z.string().min(1),
     wrappedFileKey: z.string().min(1),
-    iv: z.string().min(1), // IV for file content
+    iv: z.string().min(1).refine(isValidIV, "Invalid IV format. Must be base64 encoded 12 bytes."), // IV for file content
     filenameIv: z.string().min(1).optional(), // IV for filename encryption
     thumbnailIv: z.string().min(1).optional(), // IV for thumbnail encryption
     metadataIv: z.string().min(1).optional(), // IV for metadata (title/description)

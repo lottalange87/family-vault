@@ -226,32 +226,36 @@ describe("Gallery API", () => {
       const { PUT } = await import("../app/api/gallery/reorder/route");
       const db = getTestDatabase();
       
-      // Create files in initial order
+      // Create files in initial order with valid UUIDs
+      const fileIdA = crypto.randomUUID();
+      const fileIdB = crypto.randomUUID();
+      const fileIdC = crypto.randomUUID();
+      
       await db.insert(schema.encryptedFiles).values([
         {
-          id: "a",
+          id: fileIdA,
           encryptedFilename: "a.enc",
           encryptedBlobPath: "/a",
           wrappedFileKey: "key-a",
-          iv: "iv-a",
+          iv: "iv-a-is-12-b",
           orderIndex: 0,
           createdAt: new Date().toISOString(),
         },
         {
-          id: "b",
+          id: fileIdB,
           encryptedFilename: "b.enc",
           encryptedBlobPath: "/b",
           wrappedFileKey: "key-b",
-          iv: "iv-b",
+          iv: "iv-b-is-12-b",
           orderIndex: 1,
           createdAt: new Date().toISOString(),
         },
         {
-          id: "c",
+          id: fileIdC,
           encryptedFilename: "c.enc",
           encryptedBlobPath: "/c",
           wrappedFileKey: "key-c",
-          iv: "iv-c",
+          iv: "iv-c-is-12-b",
           orderIndex: 2,
           createdAt: new Date().toISOString(),
         },
@@ -261,7 +265,7 @@ describe("Gallery API", () => {
       const request = new Request("http://localhost/api/gallery/reorder", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileIds: ["c", "a", "b"] }),
+        body: JSON.stringify({ fileIds: [fileIdC, fileIdA, fileIdB] }),
       });
 
       const response = await PUT(request);
@@ -276,11 +280,11 @@ describe("Gallery API", () => {
         orderBy: (files, { asc }) => [asc(files.orderIndex)],
       });
       
-      expect(files[0].id).toBe("c");
+      expect(files[0].id).toBe(fileIdC);
       expect(files[0].orderIndex).toBe(0);
-      expect(files[1].id).toBe("a");
+      expect(files[1].id).toBe(fileIdA);
       expect(files[1].orderIndex).toBe(1);
-      expect(files[2].id).toBe("b");
+      expect(files[2].id).toBe(fileIdB);
       expect(files[2].orderIndex).toBe(2);
     });
 

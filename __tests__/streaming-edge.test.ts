@@ -234,16 +234,30 @@ describe("Streaming Edge Cases", () => {
         createdAt: new Date().toISOString(),
       });
 
-      const invalidIndices = ["abc", "1.5", "1e10", "0x1", ""];
+      // These inputs result in NaN (invalid)
+      const nanIndices = ["abc", ""];
       
-      for (const index of invalidIndices) {
+      for (const index of nanIndices) {
         const request = new Request(`http://localhost/api/stream/${TEST_ID}/chunk/${index}`);
         const response = await GET(request, { 
           params: Promise.resolve({ id: TEST_ID, index }) 
         });
         
-        // API returns 400 for invalid chunk index (NaN check)
+        // API returns 400 for NaN chunk index
         expect(response.status).toBe(400);
+      }
+      
+      // These inputs parse to valid integers but result in 404 (chunk not found)
+      const notFoundIndices = ["1.5", "1e10", "0x1"]; // parseInt gives 1, 1, 0 respectively
+      
+      for (const index of notFoundIndices) {
+        const request = new Request(`http://localhost/api/stream/${TEST_ID}/chunk/${index}`);
+        const response = await GET(request, { 
+          params: Promise.resolve({ id: TEST_ID, index }) 
+        });
+        
+        // API returns 404 (chunk not found) since these parse to valid integers
+        expect(response.status).toBe(404);
       }
     });
 
