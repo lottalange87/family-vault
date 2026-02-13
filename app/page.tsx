@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 
 export default function Home() {
-  const { isUnlocked, isInitialized, isLoading, hasHydrated, checkInitialization, restoreFromSession } = useVault();
+  const { isUnlocked, isInitialized, isLoading, hasHydrated, masterKey, checkInitialization, restoreFromSession } = useVault();
   const router = useRouter();
 
   useEffect(() => {
@@ -19,11 +19,11 @@ export default function Home() {
   }, [checkInitialization, restoreFromSession]);
 
   useEffect(() => {
-    // Redirect to gallery if unlocked (only after hydration)
-    if (hasHydrated && isUnlocked) {
+    // Redirect to gallery only if truly unlocked with valid master key
+    if (hasHydrated && isUnlocked && masterKey) {
       router.push("/gallery");
     }
-  }, [isUnlocked, hasHydrated, router]);
+  }, [isUnlocked, masterKey, hasHydrated, router]);
 
   // Show loading state while hydrating or loading
   if (isLoading || isInitialized === null || !hasHydrated) {

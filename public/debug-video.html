@@ -1,0 +1,66 @@
+<html>
+<head><title>Video Debug</title></head>
+<body>
+<h1>Video Debug Test</h1>
+<p>Video ID: 5770a81a-d1f1-4ffa-8ccb-1aab451d310a</p>
+<div id="status">Loading...</div>
+<video id="video" controls style="max-width: 100%; margin-top: 20px;"></video>
+<pre id="log" style="background: #f0f0f0; padding: 10px; margin-top: 20px; overflow: auto; max-height: 400px;"></pre>
+
+<script>
+const videoId = '5770a81a-d1f1-4ffa-8ccb-1aab451d310a';
+const log = document.getElementById('log');
+const status = document.getElementById('status');
+const video = document.getElementById('video');
+
+function logMsg(msg) {
+  log.textContent += msg + '\n';
+  console.log(msg);
+}
+
+async function testVideo() {
+  try {
+    logMsg('1. Fetching manifest...');
+    const manifestRes = await fetch(`/api/fmp4/${videoId}/manifest`);
+    if (!manifestRes.ok) throw new Error(`Manifest failed: ${manifestRes.status}`);
+    const manifest = await manifestRes.json();
+    logMsg(`   Format: ${manifest.format}`);
+    logMsg(`   Chunks: ${manifest.totalChunks}`);
+    logMsg(`   Size: ${manifest.totalSize} bytes`);
+
+    logMsg('2. Fetching first chunk...');
+    const chunkRes = await fetch(`/api/stream/${videoId}/chunk/0`);
+    if (!chunkRes.ok) throw new Error(`Chunk failed: ${chunkRes.status}`);
+    const chunkData = await chunkRes.arrayBuffer();
+    logMsg(`   Chunk size: ${chunkData.byteLength} bytes`);
+    logMsg(`   First 16 bytes: ${new Uint8Array(chunkData.slice(0, 16)).toString()}`);
+
+    logMsg('3. Checking if video element works...');
+    logMsg(`   Video supported: ${!!video.canPlayType}`);
+    logMsg(`   Can play video/mp4: ${video.canPlayType('video/mp4')}`);
+
+    logMsg('4. Creating blob from encrypted chunk (for testing)...');
+    // This will fail to play because it's encrypted, but should show if blob creation works
+    const blob = new Blob([chunkData], { type: 'video/mp4' });
+    const url = URL.createObjectURL(blob);
+    video.src = url;
+    
+    video.onerror = (e) => {
+      logMsg(`   Video error: ${video.error?.message || 'Unknown'}`);
+    };
+    
+    video.onloadedmetadata = () => {
+      logMsg(`   Video metadata loaded: ${video.videoWidth}x${video.videoHeight}`);
+    };
+
+    status.textContent = 'Test complete - check log';
+  } catch (err) {
+    logMsg(`ERROR: ${err.message}`);
+    status.textContent = 'Test failed';
+  }
+}
+
+testVideo();
+</script>
+</body>
+</html>

@@ -48,6 +48,8 @@ export function VideoModal({
   const workerRef = useRef<Worker | null>(null);
   const mediaSourceRef = useRef<MediaSource | null>(null);
   const sourceBufferRef = useRef<SourceBuffer | null>(null);
+
+  const { isUnlocked, masterKey } = useVault();
   const manifestRef = useRef<any>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const nextSegmentIndexRef = useRef(0);
@@ -384,7 +386,7 @@ export function VideoModal({
 
         <div className="relative w-full h-full flex flex-col" onClick={(e) => e.stopPropagation()}>
           <div className="flex-1 flex items-center justify-center p-4 pt-16">
-            {(isLoading || error) && (
+            {(isLoading || error || !isUnlocked) && (
               <div className="flex flex-col items-center text-white">
                 {isLoading ? (
                   <>
@@ -395,6 +397,21 @@ export function VideoModal({
                         Loaded {progress.loaded} / {progress.total} segments
                       </p>
                     )}
+                  </>
+                ) : !isUnlocked ? (
+                  <>
+                    <Lock className="h-16 w-16 mb-4 text-yellow-400" />
+                    <p className="text-lg font-medium">Vault Locked</p>
+                    <p className="text-sm text-white/50 mt-2 max-w-md text-center">
+                      Please unlock your vault to watch videos.
+                    </p>
+                    <Button 
+                      variant="default" 
+                      className="mt-4 bg-yellow-500 hover:bg-yellow-600 text-black font-medium"
+                      onClick={() => window.location.href = '/'}
+                    >
+                      Unlock Vault
+                    </Button>
                   </>
                 ) : (
                   <>
@@ -410,7 +427,7 @@ export function VideoModal({
               controls
               autoPlay
               className="max-w-full max-h-full rounded-lg"
-              style={{ display: isLoading || error ? 'none' : 'block' }}
+              style={{ display: (isLoading || error || !isUnlocked) ? 'none' : 'block' }}
             />
           </div>
 
