@@ -55,8 +55,6 @@ export function VideoModal({
   const nextSegmentIndexRef = useRef(0);
   const isEndedRef = useRef(false);
 
-  const masterKey = useVault.getState().masterKey;
-
   // Cleanup function
   const cleanup = () => {
     console.log("[VideoModal] Cleanup");
