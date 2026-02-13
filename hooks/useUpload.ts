@@ -364,5 +364,5 @@ async function processSingleUpload(
   }
 
   updateUploadStatus(set, upload.id, { status: "completed", progress: 100 });
-  set({ lastCompletedAt: Date.now() });
+  set((state) => ({ lastCompletedAt: Date.now() }));
 }
