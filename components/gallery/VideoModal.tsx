@@ -190,44 +190,73 @@ export function VideoModal({
       let firstChunkUrl: string | null = null;
       let isFullyLoaded = false;
 
-      console.log("[VideoModal] Loading first chunk immediately, total chunks:", manifest.totalChunks);
+      console.log("[VideoModal] Loading first 2 chunks immediately, total chunks:", manifest.totalChunks);
 
-      // STEP 1: Load first chunk immediately to start playback
+      // STEP 1: Load first 2 chunks immediately to start playback
+      // A single chunk is not a valid MP4 file, so we need at least 2 chunks for valid MP4 structure
       const loadFirstChunk = async (): Promise<boolean> => {
         if (signal.aborted) {
-          console.log("[VideoModal] Aborted before loading first chunk");
+          console.log("[VideoModal] Aborted before loading first chunks");
           return false;
         }
 
-        console.log(`[VideoModal] Fetching chunk 0...`);
-        const res = await fetch(`/api/stream/${videoId}/chunk/0`, { signal });
-        if (!res.ok) throw new Error(`Failed to load chunk 0: ${res.status}`);
+        // Load chunks 0 and 1 in parallel
+        console.log(`[VideoModal] Fetching chunks 0 and 1...`);
+        const [res0, res1] = await Promise.all([
+          fetch(`/api/stream/${videoId}/chunk/0`, { signal }),
+          manifest.totalChunks > 1 ? fetch(`/api/stream/${videoId}/chunk/1`, { signal }) : null,
+        ]);
 
-        const encrypted = await res.arrayBuffer();
-        console.log(`[VideoModal] Chunk 0 received, size:`, encrypted.byteLength);
+        if (!res0.ok) throw new Error(`Failed to load chunk 0: ${res0.status}`);
+        if (res1 && !res1.ok) throw new Error(`Failed to load chunk 1: ${res1.status}`);
 
-        const iv = generateChunkIV(0);
+        const [encrypted0, encrypted1] = await Promise.all([
+          res0.arrayBuffer(),
+          res1 ? res1.arrayBuffer() : null,
+        ]);
+
+        console.log(`[VideoModal] Chunk 0 received, size:`, encrypted0.byteLength);
+        if (encrypted1) {
+          console.log(`[VideoModal] Chunk 1 received, size:`, encrypted1.byteLength);
+        }
+
+        // Decrypt chunk 0
+        const iv0 = generateChunkIV(0);
         console.log(`[VideoModal] Decrypting chunk 0...`);
-
         try {
-          const decrypted = await decryptData(encrypted, fileKey, iv);
-          chunks[0] = new Uint8Array(decrypted);
-          console.log(`[VideoModal] Chunk 0 decrypted, size:`, decrypted.byteLength);
+          const decrypted0 = await decryptData(encrypted0, fileKey, iv0);
+          chunks[0] = new Uint8Array(decrypted0);
+          console.log(`[VideoModal] Chunk 0 decrypted, size:`, decrypted0.byteLength);
         } catch (decryptErr) {
           console.error(`[VideoModal] Failed to decrypt chunk 0:`, decryptErr);
           throw new Error(`Decryption failed for chunk 0: ${decryptErr instanceof Error ? decryptErr.message : 'Unknown'}`);
         }
 
-        setProgress({ loaded: 1, total: manifest.totalChunks });
+        // Decrypt chunk 1 if available
+        if (encrypted1) {
+          const iv1 = generateChunkIV(1);
+          console.log(`[VideoModal] Decrypting chunk 1...`);
+          try {
+            const decrypted1 = await decryptData(encrypted1, fileKey, iv1);
+            chunks[1] = new Uint8Array(decrypted1);
+            console.log(`[VideoModal] Chunk 1 decrypted, size:`, decrypted1.byteLength);
+          } catch (decryptErr) {
+            console.error(`[VideoModal] Failed to decrypt chunk 1:`, decryptErr);
+            throw new Error(`Decryption failed for chunk 1: ${decryptErr instanceof Error ? decryptErr.message : 'Unknown'}`);
+          }
+        }
 
-        // Create blob from first chunk and start playback immediately
-        console.log("[VideoModal] Creating blob from first chunk...");
-        const blob = new Blob([chunks[0]!], { type: manifest.mimeType || 'video/mp4' });
+        setProgress({ loaded: encrypted1 ? 2 : 1, total: manifest.totalChunks });
+
+        // Create blob from combined chunks 0 and 1 (single chunk is not valid MP4)
+        console.log("[VideoModal] Creating blob from combined chunks 0 and 1...");
+        const chunksToCombine = encrypted1 ? [chunks[0]!, chunks[1]!] : [chunks[0]!];
+        const blob = new Blob(chunksToCombine, { type: manifest.mimeType || 'video/mp4' });
         firstChunkUrl = URL.createObjectURL(blob);
-        console.log("[VideoModal] First chunk blob URL created:", firstChunkUrl);
+        console.log("[VideoModal] Combined chunks blob URL created:", firstChunkUrl);
 
         if (videoRef.current) {
-          console.log("[VideoModal] Setting video src to first chunk...");
+          console.log("[VideoModal] Setting video src to combined chunks...");
           videoRef.current.src = firstChunkUrl;
 
           // Add error handling for video element
@@ -258,12 +287,12 @@ export function VideoModal({
         return;
       }
 
-      console.log("[VideoModal] First chunk loaded, playback started. Loading remaining chunks in background...");
+      console.log("[VideoModal] First 2 chunks loaded, playback started. Loading remaining chunks in background...");
 
-      // STEP 2: Load remaining chunks in parallel in the background
+      // STEP 2: Load remaining chunks in parallel in the background (starting from chunk 2)
       const loadRemainingChunks = async () => {
         const remainingIndices: number[] = [];
-        for (let i = 1; i < manifest.totalChunks; i++) {
+        for (let i = 2; i < manifest.totalChunks; i++) {
           remainingIndices.push(i);
         }
 
