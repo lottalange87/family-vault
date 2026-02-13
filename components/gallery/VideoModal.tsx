@@ -94,9 +94,16 @@ export function VideoModal({
       return;
     }
 
+    // Prevent duplicate initializations
+    if (manifestRef.current) {
+      console.log("[VideoModal] Already initialized, skipping...");
+      return;
+    }
+
     let isMounted = true;
 
     const initializePlayer = async () => {
+      console.log("[VideoModal] initializePlayer starting...");
       setIsLoading(true);
       setError(null);
 
@@ -104,16 +111,17 @@ export function VideoModal({
       const { signal } = abortControllerRef.current;
 
       try {
-        // Decrypt metadata first
-        await onDecrypt();
-        if (!isMounted || signal.aborted) return;
-
+        // Note: onDecrypt is for thumbnail/metadata only, don't await it for video playback
+        // It runs in background via useGallery auto-decrypt
+        
         // Load manifest
         setLoadingText("Loading manifest...");
+        console.log("[VideoModal] Fetching manifest...");
         const manifestRes = await fetch(`/api/fmp4/${video.id}/manifest`, { signal });
         if (!manifestRes.ok) throw new Error("Failed to load manifest");
         const manifest = await manifestRes.json();
         manifestRef.current = manifest;
+        console.log("[VideoModal] Manifest loaded:", manifest.format);
 
         if (!isMounted || signal.aborted) return;
         setProgress({ loaded: 0, total: manifest.totalSegments || manifest.totalChunks || 0 });
@@ -121,9 +129,11 @@ export function VideoModal({
         // Check format
         if (manifest.format === "legacy-chunks") {
           // Use legacy blob-based loading for old videos
+          console.log("[VideoModal] Using legacy chunks loading");
           await loadLegacyChunks(video.id, manifest, signal);
         } else {
           // Use fMP4 streaming
+          console.log("[VideoModal] Using fMP4 streaming");
           await loadFmp4Stream(video.id, manifest, signal);
         }
 
@@ -139,10 +149,11 @@ export function VideoModal({
     initializePlayer();
 
     return () => {
+      console.log("[VideoModal] useEffect cleanup");
       isMounted = false;
       cleanup();
     };
-  }, [isOpen, video?.id, masterKey, onDecrypt]);
+  }, [isOpen, video?.id, masterKey]); // Removed onDecrypt from dependencies
 
   // Load legacy chunk-based video
   const loadLegacyChunks = async (videoId: string, manifest: any, signal: AbortSignal) => {
