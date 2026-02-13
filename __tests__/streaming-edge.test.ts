@@ -572,8 +572,8 @@ describe("Streaming Edge Cases", () => {
       const request = new Request(`http://localhost/api/fmp4/${TEST_ID}/segment/0`);
       const response = await GET(request, { params: Promise.resolve({ id: TEST_ID }) });
       
-      // Should return 500 (internal error) since file is missing
-      expect(response.status).toBe(500);
+      // Should return 400 since segment file doesn't exist
+      expect(response.status).toBe(400);
     });
 
     it("handles requests for non-existent file", async () => {

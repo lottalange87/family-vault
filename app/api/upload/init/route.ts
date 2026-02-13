@@ -9,7 +9,7 @@ import { join } from "path";
 const TEMP_DIR = process.env.TEMP_DIR || "./data/temp";
 const SESSION_EXPIRY_MINUTES = 60; // Sessions expire after 1 hour
 
-// POST /api/upload/init - Initialize chunked upload
+// POST /api/upload/init - Initialize chunked/fMP4 upload
 export async function POST(request: NextRequest) {
   try {
     // Check rate limit
@@ -29,16 +29,19 @@ export async function POST(request: NextRequest) {
 
     // Parse and validate request body
     const body = await request.json();
-    const parseResult = uploadInitSchema.safeParse(body);
-
-    if (!parseResult.success) {
+    
+    // Support both legacy totalChunks and new totalSegments
+    const { fileId, totalChunks, totalSegments, format, encryptedMetadata } = body;
+    
+    const segmentCount = totalSegments || totalChunks || 0;
+    const uploadFormat = format || "legacy-chunks";
+    
+    if (!fileId || !segmentCount || !encryptedMetadata) {
       return NextResponse.json(
-        { error: "Invalid request body", details: parseResult.error.issues },
+        { error: "Missing required fields: fileId, totalSegments/totalChunks, encryptedMetadata" },
         { status: 400 }
       );
     }
-
-    const { fileId, totalChunks, encryptedMetadata } = parseResult.data;
 
     // Validate IV
     if (!isValidIV(encryptedMetadata.iv)) {
@@ -48,7 +51,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create temp directory for chunks
+    // Validate segment count
+    if (segmentCount < 1 || segmentCount > 10000) {
+      return NextResponse.json(
+        { error: "Invalid segment count. Must be between 1 and 10000." },
+        { status: 400 }
+      );
+    }
+
+    // Create temp directory for segments
     const sessionId = crypto.randomUUID();
     const tempDir = join(TEMP_DIR, sessionId);
     await mkdir(tempDir, { recursive: true });
@@ -61,9 +72,13 @@ export async function POST(request: NextRequest) {
     await db.insert(uploadSessions).values({
       id: sessionId,
       fileId,
-      totalChunks,
+      totalChunks: segmentCount,
       chunksReceived: 0,
-      encryptedMetadata: JSON.stringify(encryptedMetadata),
+      encryptedMetadata: JSON.stringify({
+        ...encryptedMetadata,
+        format: uploadFormat,
+        segmentInfos: encryptedMetadata.segmentInfos || [],
+      }),
       tempDir,
       createdAt: now.toISOString(),
       expiresAt: expiresAt.toISOString(),
@@ -73,9 +88,10 @@ export async function POST(request: NextRequest) {
       {
         sessionId,
         fileId,
-        totalChunks,
-        uploadUrl: `/api/upload/chunk`,
-        completeUrl: `/api/upload/complete`,
+        totalSegments: segmentCount,
+        format: uploadFormat,
+        uploadUrl: "/api/upload/segment",
+        completeUrl: "/api/upload/complete",
         expiresAt: expiresAt.toISOString(),
       },
       {

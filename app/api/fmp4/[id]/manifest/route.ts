@@ -3,6 +3,42 @@ import { db } from "@/db";
 import { encryptedFiles, encryptedChunks, fmp4Segments } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 
+interface Fmp4SegmentInfo {
+  index: number;
+  size: number;
+  duration: number | null;
+  isInit: boolean;
+}
+
+interface Fmp4Manifest {
+  videoId: string;
+  format: "fmp4" | "legacy-chunks";
+  segments: Fmp4SegmentInfo[];
+  totalSegments: number;
+  totalSize: number;
+  mimeType: string;
+  codec: string;
+  durationSeconds: number;
+  width: number | null;
+  height: number | null;
+  wrappedFileKey: string;
+  // IVs for each segment (base64 encoded)
+  segmentIVs?: string[];
+}
+
+interface LegacyManifest {
+  videoId: string;
+  format: "legacy-chunks";
+  totalChunks: number;
+  chunkSize: number;
+  totalSize: number;
+  mimeType: string;
+  durationSeconds: number;
+  width: number | null;
+  height: number | null;
+  wrappedFileKey: string;
+}
+
 // GET /api/fmp4/[id]/manifest - Get fMP4 streaming manifest
 export async function GET(
   request: NextRequest,
@@ -41,41 +77,46 @@ export async function GET(
 
       const totalSize = chunks.reduce((sum, c) => sum + c.chunkSize, 0);
 
-      return NextResponse.json({
+      const legacyManifest: LegacyManifest = {
         videoId: id,
         format: "legacy-chunks",
         totalChunks: chunks.length,
         chunkSize: chunks[0]?.chunkSize || 0,
         totalSize,
-        mimeType: file.mimeType,
+        mimeType: file.mimeType || "video/mp4",
         durationSeconds: file.fileSize ? Math.round(file.fileSize / (1024 * 1024)) : 0,
         width: null,
         height: null,
         wrappedFileKey: file.wrappedFileKey,
-      });
+      };
+
+      return NextResponse.json(legacyManifest);
     }
 
     // fMP4 format
     const totalSize = segments.reduce((sum, s) => sum + s.segmentSize, 0);
+    const segmentInfos: Fmp4SegmentInfo[] = segments.map((s) => ({
+      index: s.segmentIndex,
+      size: s.segmentSize,
+      duration: s.duration,
+      isInit: s.init,
+    }));
 
-    return NextResponse.json({
+    const manifest: Fmp4Manifest = {
       videoId: id,
       format: "fmp4",
-      segments: segments.map((s) => ({
-        index: s.segmentIndex,
-        size: s.segmentSize,
-        duration: s.duration,
-        isInit: s.init,
-      })),
+      segments: segmentInfos,
       totalSegments: segments.length,
       totalSize,
-      mimeType: file.mimeType,
+      mimeType: file.mimeType || "video/mp4",
       codec: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
       durationSeconds: file.fileSize ? Math.round(file.fileSize / (1024 * 1024)) : 0,
       width: null,
       height: null,
       wrappedFileKey: file.wrappedFileKey,
-    });
+    };
+
+    return NextResponse.json(manifest);
   } catch (error) {
     console.error("[fMP4 Manifest] Error:", error);
     return NextResponse.json(

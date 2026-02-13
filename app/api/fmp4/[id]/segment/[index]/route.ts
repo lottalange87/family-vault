@@ -8,16 +8,13 @@ import { join } from "path";
 // GET /api/fmp4/[id]/segment/[index] - Get encrypted fMP4 segment
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string; index: string }> }
 ) {
   try {
-    const { id } = await params;
-    const url = new URL(request.url);
-    const pathParts = url.pathname.split("/");
-    const indexStr = pathParts[pathParts.length - 1];
-    const segmentIndex = parseInt(indexStr, 10);
+    const { id, index } = await params;
+    const segmentIndex = parseInt(index, 10);
 
-    if (isNaN(segmentIndex)) {
+    if (isNaN(segmentIndex) || segmentIndex < 0) {
       return NextResponse.json(
         { error: "Invalid segment index" },
         { status: 400 }
@@ -44,14 +41,21 @@ export async function GET(
       join(process.cwd(), "uploads", segment.segmentPath)
     );
 
-    // Return encrypted segment
-    return new NextResponse(encryptedData, {
-      headers: {
-        "Content-Type": "application/octet-stream",
-        "Content-Length": encryptedData.length.toString(),
-        "Cache-Control": "private, max-age=86400",
-      },
-    });
+    // Return encrypted segment with appropriate headers
+    const headers: Record<string, string> = {
+      "Content-Type": "application/octet-stream",
+      "Content-Length": encryptedData.length.toString(),
+      "Cache-Control": "private, max-age=86400",
+      "X-Segment-Index": segment.segmentIndex.toString(),
+      "X-Is-Init": segment.init ? "true" : "false",
+    };
+
+    // Add duration header for media segments
+    if (segment.duration) {
+      headers["X-Segment-Duration"] = segment.duration.toString();
+    }
+
+    return new NextResponse(encryptedData, { headers });
   } catch (error) {
     console.error("[fMP4 Segment] Error:", error);
     return NextResponse.json(
