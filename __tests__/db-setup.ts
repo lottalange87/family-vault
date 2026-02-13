@@ -133,7 +133,7 @@ export function createMockChunk(fileId: string, index: number, size = 10 * 1024 
     id: `chunk-${fileId}-${index}`,
     fileId,
     chunkIndex: index,
-    chunkPath: `./data/uploads/${fileId}/chunks/chunk-${index}.enc`,
+    chunkPath: `./data/test-uploads/${fileId}/chunks/chunk-${index}.enc`,
     chunkSize: size,
     createdAt: new Date().toISOString(),
   };

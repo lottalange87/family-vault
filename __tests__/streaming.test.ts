@@ -245,7 +245,10 @@ describe("Streaming Infrastructure", () => {
       const { GET } = await import("../app/api/fmp4/[id]/manifest/route");
       const db = getTestDatabase();
       
+      // Insert file first (required for foreign key)
       await db.insert(schema.encryptedFiles).values(createMockFile({ id: TEST_FILE_ID }));
+      
+      // Insert chunks with proper fileId reference
       await db.insert(schema.encryptedChunks).values([
         createMockChunk(TEST_FILE_ID, 0),
         createMockChunk(TEST_FILE_ID, 1),

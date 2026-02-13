@@ -20,7 +20,9 @@
     "test:streaming": "vitest run __tests__/streaming.test.ts",
     "test:streaming:watch": "vitest __tests__/streaming.test.ts",
     "test:storage": "tsx __tests__/storage.test.ts",
-    "test:edge": "vitest run __tests__/streaming-edge.test.ts"
+    "test:edge": "vitest run __tests__/streaming-edge.test.ts",
+    "test:upload": "vitest run __tests__/upload.test.ts",
+    "test:gallery": "vitest run __tests__/gallery.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
