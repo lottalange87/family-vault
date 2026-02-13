@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useVault } from "@/hooks/useVault";
-import { decryptData, base64ToUint8Array, unwrapFileKey } from "@/lib/crypto";
 
 interface VideoModalProps {
   video: {
@@ -30,14 +29,6 @@ interface VideoModalProps {
   onPrev: () => void;
 }
 
-function generateChunkIV(chunkIndex: number): Uint8Array {
-  const iv = new Uint8Array(12);
-  const view = new DataView(iv.buffer);
-  view.setBigUint64(0, BigInt(chunkIndex), false);
-  view.setUint32(8, 0, false);
-  return iv;
-}
-
 export function VideoModal({
   video,
   isOpen,
@@ -50,123 +41,305 @@ export function VideoModal({
 }: VideoModalProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [loadingText, setLoadingText] = useState("Initializing...");
   const [progress, setProgress] = useState({ loaded: 0, total: 0 });
-  
+
   const videoRef = useRef<HTMLVideoElement>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const mediaSourceRef = useRef<MediaSource | null>(null);
+  const sourceBufferRef = useRef<SourceBuffer | null>(null);
+  const manifestRef = useRef<any>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  
+  const nextSegmentIndexRef = useRef(0);
+  const isEndedRef = useRef(false);
+
   const masterKey = useVault.getState().masterKey;
+
+  // Cleanup function
+  const cleanup = () => {
+    console.log("[VideoModal] Cleanup");
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    if (sourceBufferRef.current) {
+      try {
+        sourceBufferRef.current.abort();
+      } catch (e) {}
+    }
+    if (mediaSourceRef.current?.readyState === 'open') {
+      try {
+        mediaSourceRef.current.endOfStream();
+      } catch (e) {}
+    }
+    if (workerRef.current) {
+      workerRef.current.terminate();
+      workerRef.current = null;
+    }
+    mediaSourceRef.current = null;
+    sourceBufferRef.current = null;
+    manifestRef.current = null;
+    nextSegmentIndexRef.current = 0;
+    isEndedRef.current = false;
+  };
 
   useEffect(() => {
     if (!isOpen || !video?.id || !masterKey) {
       if (!isOpen) {
-        if (videoUrl) URL.revokeObjectURL(videoUrl);
-        setVideoUrl(null);
+        cleanup();
+        setIsLoading(false);
         setError(null);
         setProgress({ loaded: 0, total: 0 });
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-          abortControllerRef.current = null;
-        }
       }
       return;
     }
-    
+
     let isMounted = true;
-    
-    const loadVideo = async () => {
+
+    const initializePlayer = async () => {
       setIsLoading(true);
       setError(null);
-      
+
       abortControllerRef.current = new AbortController();
       const { signal } = abortControllerRef.current;
-      
+
       try {
         // Decrypt metadata first
         await onDecrypt();
         if (!isMounted || signal.aborted) return;
-        
+
         // Load manifest
-        const manifestRes = await fetch(`/api/stream/${video.id}/manifest`, { signal });
+        setLoadingText("Loading manifest...");
+        const manifestRes = await fetch(`/api/fmp4/${video.id}/manifest`, { signal });
         if (!manifestRes.ok) throw new Error("Failed to load manifest");
         const manifest = await manifestRes.json();
-        
+        manifestRef.current = manifest;
+
         if (!isMounted || signal.aborted) return;
-        setProgress({ loaded: 0, total: manifest.totalChunks });
-        
-        // Unwrap file key
-        const wrappedKeyData = base64ToUint8Array(manifest.wrappedFileKey);
-        const fileKey = await unwrapFileKey(
-          wrappedKeyData.slice(0, 48),
-          masterKey,
-          wrappedKeyData.slice(48, 60)
-        );
-        
-        // Download and decrypt all chunks
-        const chunks: Uint8Array[] = [];
-        
-        for (let i = 0; i < manifest.totalChunks; i++) {
-          if (!isMounted || signal.aborted) return;
-          
-          const res = await fetch(`/api/stream/${video.id}/chunk/${i}`, { signal });
-          if (!res.ok) throw new Error(`Failed to load chunk ${i}`);
-          
-          const encrypted = await res.arrayBuffer();
-          const iv = generateChunkIV(i);
-          const decrypted = await decryptData(encrypted, fileKey, iv);
-          chunks.push(new Uint8Array(decrypted));
-          
-          setProgress({ loaded: i + 1, total: manifest.totalChunks });
+        setProgress({ loaded: 0, total: manifest.totalSegments || manifest.totalChunks || 0 });
+
+        // Check format
+        if (manifest.format === "legacy-chunks") {
+          // Use legacy blob-based loading for old videos
+          await loadLegacyChunks(video.id, manifest, signal);
+        } else {
+          // Use fMP4 streaming
+          await loadFmp4Stream(video.id, manifest, signal);
         }
-        
-        if (!isMounted || signal.aborted) return;
-        
-        // Combine chunks and create blob URL
-        const totalSize = chunks.reduce((sum, c) => sum + c.length, 0);
-        const combined = new Uint8Array(totalSize);
-        let offset = 0;
-        for (const chunk of chunks) {
-          combined.set(chunk, offset);
-          offset += chunk.length;
-        }
-        
-        const blob = new Blob([combined], { type: manifest.mimeType || 'video/mp4' });
-        const url = URL.createObjectURL(blob);
-        
-        setVideoUrl(url);
-        setIsLoading(false);
-        
-        // Auto-play
-        setTimeout(() => {
-          videoRef.current?.play().catch(() => {});
-        }, 100);
-        
+
       } catch (err) {
         if (!signal.aborted) {
-          console.error('[VideoModal] Error:', err);
-          setError(err instanceof Error ? err.message : 'Failed to load video');
+          console.error("[VideoModal] Error:", err);
+          setError(err instanceof Error ? err.message : "Failed to load video");
           setIsLoading(false);
         }
       }
     };
-    
-    loadVideo();
-    
+
+    initializePlayer();
+
     return () => {
       isMounted = false;
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
+      cleanup();
     };
   }, [isOpen, video?.id, masterKey, onDecrypt]);
 
-  // Cleanup URL on unmount
-  useEffect(() => {
-    return () => {
-      if (videoUrl) URL.revokeObjectURL(videoUrl);
+  // Load legacy chunk-based video
+  const loadLegacyChunks = async (videoId: string, manifest: any, signal: AbortSignal) => {
+    setLoadingText("Loading video...");
+
+    // Import crypto functions dynamically
+    const { base64ToUint8Array, unwrapFileKey, decryptData } = await import("@/lib/crypto");
+
+    // Unwrap file key
+    const wrappedKeyData = base64ToUint8Array(manifest.wrappedFileKey);
+    const fileKey = await unwrapFileKey(
+      wrappedKeyData.slice(0, 48),
+      masterKey!,
+      wrappedKeyData.slice(48, 60)
+    );
+
+    // Generate chunk IV
+    const generateChunkIV = (chunkIndex: number): Uint8Array => {
+      const iv = new Uint8Array(12);
+      const view = new DataView(iv.buffer);
+      view.setBigUint64(0, BigInt(chunkIndex), false);
+      view.setUint32(8, 0, false);
+      return iv;
     };
-  }, [videoUrl]);
+
+    // Download and decrypt all chunks
+    const chunks: Uint8Array[] = [];
+
+    for (let i = 0; i < manifest.totalChunks; i++) {
+      if (signal.aborted) return;
+
+      const res = await fetch(`/api/stream/${videoId}/chunk/${i}`, { signal });
+      if (!res.ok) throw new Error(`Failed to load chunk ${i}`);
+
+      const encrypted = await res.arrayBuffer();
+      const iv = generateChunkIV(i);
+      const decrypted = await decryptData(encrypted, fileKey, iv);
+      chunks.push(new Uint8Array(decrypted));
+
+      setProgress({ loaded: i + 1, total: manifest.totalChunks });
+    }
+
+    if (signal.aborted) return;
+
+    // Combine chunks and create blob URL
+    const totalSize = chunks.reduce((sum, c) => sum + c.length, 0);
+    const combined = new Uint8Array(totalSize);
+    let offset = 0;
+    for (const chunk of chunks) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    const blob = new Blob([combined], { type: manifest.mimeType || 'video/mp4' });
+    const url = URL.createObjectURL(blob);
+
+    if (videoRef.current) {
+      videoRef.current.src = url;
+    }
+
+    setIsLoading(false);
+  };
+
+  // Load fMP4 stream with MSE
+  const loadFmp4Stream = async (videoId: string, manifest: any, signal: AbortSignal) => {
+    setLoadingText("Initializing player...");
+
+    const video = videoRef.current;
+    if (!video) throw new Error("Video element not found");
+
+    // Create MediaSource
+    const mediaSource = new MediaSource();
+    mediaSourceRef.current = mediaSource;
+    const url = URL.createObjectURL(mediaSource);
+    video.src = url;
+
+    // Wait for sourceopen
+    await new Promise<void>((resolve, reject) => {
+      mediaSource.addEventListener('sourceopen', () => resolve(), { once: true });
+      mediaSource.addEventListener('error', reject, { once: true });
+      setTimeout(() => reject(new Error('MediaSource timeout')), 10000);
+    });
+
+    if (signal.aborted) return;
+
+    // Add SourceBuffer
+    const mimeType = manifest.codec || 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+    if (!MediaSource.isTypeSupported(mimeType)) {
+      throw new Error(`MIME type not supported: ${mimeType}`);
+    }
+
+    const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+    sourceBuffer.mode = 'segments';
+    sourceBufferRef.current = sourceBuffer;
+
+    // Load init segment first
+    setLoadingText("Loading init segment...");
+    const initSegment = manifest.segments.find((s: any) => s.isInit);
+    if (!initSegment) {
+      throw new Error("No init segment found");
+    }
+
+    // Import crypto functions
+    const { base64ToUint8Array, unwrapFileKey, decryptData } = await import("@/lib/crypto");
+
+    // Unwrap file key
+    const wrappedKeyData = base64ToUint8Array(manifest.wrappedFileKey);
+    const fileKey = await unwrapFileKey(
+      wrappedKeyData.slice(0, 48),
+      masterKey!,
+      wrappedKeyData.slice(48, 60)
+    );
+
+    // Generate segment IV
+    const generateSegmentIV = (index: number): Uint8Array => {
+      const iv = new Uint8Array(12);
+      const view = new DataView(iv.buffer);
+      view.setBigUint64(0, BigInt(index), false);
+      view.setUint32(8, 0, false);
+      return iv;
+    };
+
+    // Fetch and decrypt init segment
+    const initRes = await fetch(`/api/fmp4/${videoId}/segment/${initSegment.index}`, { signal });
+    if (!initRes.ok) throw new Error("Failed to load init segment");
+
+    const initEncrypted = await initRes.arrayBuffer();
+    const initIV = generateSegmentIV(initSegment.index);
+    const initDecrypted = await decryptData(initEncrypted, fileKey, initIV);
+
+    // Append init segment
+    sourceBuffer.appendBuffer(initDecrypted);
+    await new Promise(r => sourceBuffer.addEventListener('updateend', r, { once: true }));
+
+    if (signal.aborted) return;
+
+    // Load first 2 media segments
+    setLoadingText("Loading video segments...");
+    const mediaSegments = manifest.segments.filter((s: any) => !s.isInit).slice(0, 2);
+
+    for (const segment of mediaSegments) {
+      if (signal.aborted) return;
+
+      const res = await fetch(`/api/fmp4/${videoId}/segment/${segment.index}`, { signal });
+      if (!res.ok) continue;
+
+      const encrypted = await res.arrayBuffer();
+      const iv = generateSegmentIV(segment.index);
+      const decrypted = await decryptData(encrypted, fileKey, iv);
+
+      sourceBuffer.appendBuffer(decrypted);
+      await new Promise(r => sourceBuffer.addEventListener('updateend', r, { once: true }));
+
+      setProgress(prev => ({ loaded: prev.loaded + 1, total: manifest.totalSegments }));
+    }
+
+    if (signal.aborted) return;
+
+    // Start playback
+    setIsLoading(false);
+    video.play().catch(() => {});
+
+    // Load remaining segments in background
+    nextSegmentIndexRef.current = 2;
+    const remainingSegments = manifest.segments.filter((s: any) => !s.isInit).slice(2);
+
+    for (const segment of remainingSegments) {
+      if (signal.aborted) return;
+
+      try {
+        const res = await fetch(`/api/fmp4/${videoId}/segment/${segment.index}`, { signal });
+        if (!res.ok) continue;
+
+        const encrypted = await res.arrayBuffer();
+        const iv = generateSegmentIV(segment.index);
+        const decrypted = await decryptData(encrypted, fileKey, iv);
+
+        // Wait if buffer is updating
+        if (sourceBuffer.updating) {
+          await new Promise(r => sourceBuffer.addEventListener('updateend', r, { once: true }));
+        }
+
+        sourceBuffer.appendBuffer(decrypted);
+        setProgress(prev => ({ loaded: prev.loaded + 1, total: manifest.totalSegments }));
+      } catch (e) {
+        console.error(`[VideoModal] Segment ${segment.index} failed:`, e);
+      }
+    }
+
+    // End of stream
+    if (!signal.aborted && mediaSource.readyState === 'open' && !isEndedRef.current) {
+      isEndedRef.current = true;
+      try {
+        mediaSource.endOfStream();
+      } catch (e) {}
+    }
+  };
 
   // Keyboard navigation
   useEffect(() => {
@@ -211,30 +384,39 @@ export function VideoModal({
 
         <div className="relative w-full h-full flex flex-col" onClick={(e) => e.stopPropagation()}>
           <div className="flex-1 flex items-center justify-center p-4 pt-16">
-            {isLoading ? (
+            {(isLoading || error) && (
               <div className="flex flex-col items-center text-white">
-                <Loader2 className="h-12 w-12 animate-spin mb-4" />
-                <p>Loading video... {progress.loaded}/{progress.total} chunks</p>
+                {isLoading ? (
+                  <>
+                    <Loader2 className="h-12 w-12 animate-spin mb-4" />
+                    <p>{loadingText}</p>
+                    {progress.total > 0 && (
+                      <p className="text-sm text-white/50 mt-2">
+                        Loaded {progress.loaded} / {progress.total} segments
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <Lock className="h-16 w-16 mb-4 text-red-400" />
+                    <p>{error}</p>
+                  </>
+                )}
               </div>
-            ) : error ? (
-              <div className="flex flex-col items-center text-white">
-                <Lock className="h-16 w-16 mb-4 text-red-400" />
-                <p>{error}</p>
-              </div>
-            ) : (
-              <video 
-                ref={videoRef} 
-                src={videoUrl || undefined}
-                controls 
-                autoPlay
-                className="max-w-full max-h-full rounded-lg"
-              />
             )}
+
+            <video
+              ref={videoRef}
+              controls
+              autoPlay
+              className="max-w-full max-h-full rounded-lg"
+              style={{ display: isLoading || error ? 'none' : 'block' }}
+            />
           </div>
 
-          <motion.div 
-            initial={{ y: 20, opacity: 0 }} 
-            animate={{ y: 0, opacity: 1 }} 
+          <motion.div
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
             className="bg-black/80 backdrop-blur-sm p-4 border-t border-white/10"
           >
             <div className="max-w-4xl mx-auto">

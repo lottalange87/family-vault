@@ -61,6 +61,20 @@ export const encryptedChunks = sqliteTable("encrypted_chunks", {
   createdAt: text("created_at").notNull(),
 });
 
+// fMP4 segments for true streaming
+export const fmp4Segments = sqliteTable("fmp4_segments", {
+  id: text("id").primaryKey(),
+  videoId: text("video_id")
+    .notNull()
+    .references(() => encryptedFiles.id, { onDelete: "cascade" }),
+  segmentIndex: integer("segment_index").notNull(),
+  segmentPath: text("segment_path").notNull(),
+  segmentSize: integer("segment_size").notNull(),
+  duration: integer("duration"), // Duration in milliseconds
+  init: integer("init", { mode: "boolean" }).default(false).notNull(), // Is this the init segment?
+  createdAt: text("created_at").notNull(),
+});
+
 // Relations
 export const encryptedFilesRelations = relations(encryptedFiles, ({ one, many }) => ({
   metadata: one(encryptedMetadata, {
@@ -68,6 +82,7 @@ export const encryptedFilesRelations = relations(encryptedFiles, ({ one, many })
     references: [encryptedMetadata.fileId],
   }),
   chunks: many(encryptedChunks),
+  fmp4Segments: many(fmp4Segments),
 }));
 
 export const encryptedMetadataRelations = relations(encryptedMetadata, ({ one }) => ({
@@ -83,9 +98,11 @@ export type EncryptedFile = typeof encryptedFiles.$inferSelect;
 export type EncryptedMetadata = typeof encryptedMetadata.$inferSelect;
 export type UploadSession = typeof uploadSessions.$inferSelect;
 export type EncryptedChunk = typeof encryptedChunks.$inferSelect;
+export type Fmp4Segment = typeof fmp4Segments.$inferSelect;
 
 export type NewVaultConfig = typeof vaultConfig.$inferInsert;
 export type NewEncryptedFile = typeof encryptedFiles.$inferInsert;
 export type NewEncryptedMetadata = typeof encryptedMetadata.$inferInsert;
 export type NewUploadSession = typeof uploadSessions.$inferInsert;
 export type NewEncryptedChunk = typeof encryptedChunks.$inferInsert;
+export type NewFmp4Segment = typeof fmp4Segments.$inferInsert;
