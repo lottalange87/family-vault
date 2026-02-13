@@ -147,18 +147,30 @@ export async function cleanupTempDir(sessionId: string): Promise<void> {
   }
 }
 
-// Delete file and its directory
+// Delete file and its directory recursively
 export async function deleteEncryptedFile(fileId: string): Promise<void> {
   const dir = join(UPLOAD_DIR, fileId);
-  try {
-    const files = await readdir(dir);
-    for (const file of files) {
-      await unlink(join(dir, file));
+  
+  async function removeDirRecursive(dirPath: string): Promise<void> {
+    try {
+      const entries = await readdir(dirPath, { withFileTypes: true });
+      
+      for (const entry of entries) {
+        const fullPath = join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+          await removeDirRecursive(fullPath);
+        } else {
+          await unlink(fullPath);
+        }
+      }
+      
+      await rmdir(dirPath);
+    } catch (error) {
+      // Directory might not exist
     }
-    await rmdir(dir);
-  } catch (error) {
-    // Directory might not exist
   }
+  
+  await removeDirRecursive(dir);
 }
 
 // Delete encrypted thumbnail

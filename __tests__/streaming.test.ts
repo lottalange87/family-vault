@@ -1,15 +1,23 @@
 /**
  * Streaming Infrastructure Test Suite
- * Tests for API routes: /api/stream/*, /api/fmp4/*, /api/files/*/stream
- * Run with: npm run test:streaming
+ * Tests API routes - stream, fmp4, files
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
-import { db } from "../db";
-import { encryptedFiles, encryptedChunks, fmp4Segments, uploadSessions } from "../db/schema";
-import { eq } from "drizzle-orm";
 import { mkdir, writeFile, rm } from "fs/promises";
 import { join } from "path";
+import {
+  getBlobPath,
+  getChunkPath,
+  getThumbnailPath,
+  saveEncryptedBlob,
+  readChunk,
+  readEncryptedBlob,
+  saveChunk,
+  combineChunks,
+  moveChunksToStorage,
+  cleanupTempDir,
+} from "../lib/storage";
 
 // Test data
 const TEST_FILE_ID = "test-file-123";
@@ -96,19 +104,6 @@ describe("Streaming Infrastructure", () => {
   });
 
   describe("Storage Library", () => {
-    const { 
-      getBlobPath, 
-      getChunkPath, 
-      getThumbnailPath, 
-      saveEncryptedBlob, 
-      readChunk,
-      readEncryptedBlob,
-      saveChunk,
-      combineChunks,
-      moveChunksToStorage,
-      cleanupTempDir,
-    } = await import("../lib/storage");
-
     describe("Path helpers", () => {
       it("getBlobPath returns correct path", () => {
         const path = getBlobPath("test-id");
