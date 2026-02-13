@@ -155,7 +155,7 @@ export function VideoModal({
     };
   }, [isOpen, video?.id, masterKey]); // Removed onDecrypt from dependencies
 
-  // Load legacy chunk-based video
+  // Load legacy chunk-based video with progressive streaming
   const loadLegacyChunks = async (videoId: string, manifest: any, signal: AbortSignal) => {
     console.log("[VideoModal] loadLegacyChunks started for:", videoId);
     setLoadingText("Loading video...");
@@ -168,7 +168,7 @@ export function VideoModal({
       // Unwrap file key
       const wrappedKeyData = base64ToUint8Array(manifest.wrappedFileKey);
       console.log("[VideoModal] Wrapped key length:", wrappedKeyData.length);
-      
+
       const fileKey = await unwrapFileKey(
         wrappedKeyData.slice(0, 48),
         masterKey!,
@@ -185,92 +185,211 @@ export function VideoModal({
         return iv;
       };
 
-      // Download and decrypt all chunks
-      const chunks: Uint8Array[] = [];
+      // Array to hold all chunks (will be populated progressively)
+      const chunks: (Uint8Array | null)[] = new Array(manifest.totalChunks).fill(null);
+      let firstChunkUrl: string | null = null;
+      let isFullyLoaded = false;
 
-      console.log("[VideoModal] Starting chunk download, total:", manifest.totalChunks);
-      for (let i = 0; i < manifest.totalChunks; i++) {
+      console.log("[VideoModal] Loading first chunk immediately, total chunks:", manifest.totalChunks);
+
+      // STEP 1: Load first chunk immediately to start playback
+      const loadFirstChunk = async (): Promise<boolean> => {
         if (signal.aborted) {
-          console.log("[VideoModal] Aborted at chunk", i);
-          return;
+          console.log("[VideoModal] Aborted before loading first chunk");
+          return false;
         }
 
-        console.log(`[VideoModal] Fetching chunk ${i}...`);
-        const res = await fetch(`/api/stream/${videoId}/chunk/${i}`, { signal });
-        if (!res.ok) throw new Error(`Failed to load chunk ${i}: ${res.status}`);
+        console.log(`[VideoModal] Fetching chunk 0...`);
+        const res = await fetch(`/api/stream/${videoId}/chunk/0`, { signal });
+        if (!res.ok) throw new Error(`Failed to load chunk 0: ${res.status}`);
 
         const encrypted = await res.arrayBuffer();
-        console.log(`[VideoModal] Chunk ${i} received, size:`, encrypted.byteLength);
-        
-        const iv = generateChunkIV(i);
-        console.log(`[VideoModal] Decrypting chunk ${i}...`);
-        
+        console.log(`[VideoModal] Chunk 0 received, size:`, encrypted.byteLength);
+
+        const iv = generateChunkIV(0);
+        console.log(`[VideoModal] Decrypting chunk 0...`);
+
         try {
           const decrypted = await decryptData(encrypted, fileKey, iv);
-          chunks.push(new Uint8Array(decrypted));
-          console.log(`[VideoModal] Chunk ${i} decrypted, size:`, decrypted.byteLength);
+          chunks[0] = new Uint8Array(decrypted);
+          console.log(`[VideoModal] Chunk 0 decrypted, size:`, decrypted.byteLength);
         } catch (decryptErr) {
-          console.error(`[VideoModal] Failed to decrypt chunk ${i}:`, decryptErr);
-          throw new Error(`Decryption failed for chunk ${i}: ${decryptErr instanceof Error ? decryptErr.message : 'Unknown'}`);
+          console.error(`[VideoModal] Failed to decrypt chunk 0:`, decryptErr);
+          throw new Error(`Decryption failed for chunk 0: ${decryptErr instanceof Error ? decryptErr.message : 'Unknown'}`);
         }
 
-        setProgress({ loaded: i + 1, total: manifest.totalChunks });
-      }
+        setProgress({ loaded: 1, total: manifest.totalChunks });
 
-      if (signal.aborted) {
-        console.log("[VideoModal] Aborted after download");
+        // Create blob from first chunk and start playback immediately
+        console.log("[VideoModal] Creating blob from first chunk...");
+        const blob = new Blob([chunks[0]!], { type: manifest.mimeType || 'video/mp4' });
+        firstChunkUrl = URL.createObjectURL(blob);
+        console.log("[VideoModal] First chunk blob URL created:", firstChunkUrl);
+
+        if (videoRef.current) {
+          console.log("[VideoModal] Setting video src to first chunk...");
+          videoRef.current.src = firstChunkUrl;
+
+          // Add error handling for video element
+          videoRef.current.onerror = (e) => {
+            console.error("[VideoModal] Video element error:", videoRef.current?.error);
+            setError(`Video playback error: ${videoRef.current?.error?.message || 'Unknown error'}`);
+            setIsLoading(false);
+          };
+
+          videoRef.current.onloadedmetadata = () => {
+            console.log("[VideoModal] Video metadata loaded:", videoRef.current?.videoWidth, "x", videoRef.current?.videoHeight);
+            setIsLoading(false);
+          };
+
+          videoRef.current.oncanplay = () => {
+            console.log("[VideoModal] Video can play");
+          };
+        }
+
+        setIsLoading(false);
+        return true;
+      };
+
+      // Load first chunk and start playback
+      const firstChunkLoaded = await loadFirstChunk();
+      if (!firstChunkLoaded || signal.aborted) {
+        console.log("[VideoModal] First chunk load failed or aborted");
         return;
       }
 
-      console.log("[VideoModal] All chunks downloaded, combining...");
-      // Combine chunks and create blob URL
-      const totalSize = chunks.reduce((sum, c) => sum + c.length, 0);
-      console.log("[VideoModal] Total combined size:", totalSize);
-      
-      const combined = new Uint8Array(totalSize);
-      let offset = 0;
-      for (const chunk of chunks) {
-        combined.set(chunk, offset);
-        offset += chunk.length;
-      }
+      console.log("[VideoModal] First chunk loaded, playback started. Loading remaining chunks in background...");
 
-      // Check MP4 signature
-      const signature = new Uint8Array(combined.slice(4, 8));
-      const sigString = String.fromCharCode(...signature);
-      console.log("[VideoModal] MP4 signature:", sigString);
-      
-      if (sigString !== 'ftyp') {
-        console.warn("[VideoModal] Warning: Expected 'ftyp' signature, got:", sigString);
-      }
+      // STEP 2: Load remaining chunks in parallel in the background
+      const loadRemainingChunks = async () => {
+        const remainingIndices: number[] = [];
+        for (let i = 1; i < manifest.totalChunks; i++) {
+          remainingIndices.push(i);
+        }
 
-      console.log("[VideoModal] Creating blob...");
-      const blob = new Blob([combined], { type: manifest.mimeType || 'video/mp4' });
-      const url = URL.createObjectURL(blob);
-      console.log("[VideoModal] Blob URL created:", url);
+        console.log("[VideoModal] Loading", remainingIndices.length, "remaining chunks in parallel");
 
-      if (videoRef.current) {
-        console.log("[VideoModal] Setting video src...");
-        videoRef.current.src = url;
-        
-        // Add error handling for video element
-        videoRef.current.onerror = (e) => {
-          console.error("[VideoModal] Video element error:", videoRef.current?.error);
-          setError(`Video playback error: ${videoRef.current?.error?.message || 'Unknown error'}`);
-          setIsLoading(false);
+        // Load chunks in parallel with concurrency limit
+        const concurrencyLimit = 3;
+        const loadChunk = async (chunkIndex: number): Promise<void> => {
+          if (signal.aborted) {
+            console.log(`[VideoModal] Skipping chunk ${chunkIndex} - aborted`);
+            return;
+          }
+
+          try {
+            console.log(`[VideoModal] Fetching chunk ${chunkIndex}...`);
+            const res = await fetch(`/api/stream/${videoId}/chunk/${chunkIndex}`, { signal });
+            if (!res.ok) {
+              console.error(`[VideoModal] Failed to load chunk ${chunkIndex}: ${res.status}`);
+              throw new Error(`Failed to load chunk ${chunkIndex}: ${res.status}`);
+            }
+
+            const encrypted = await res.arrayBuffer();
+            const iv = generateChunkIV(chunkIndex);
+
+            const decrypted = await decryptData(encrypted, fileKey, iv);
+            chunks[chunkIndex] = new Uint8Array(decrypted);
+            console.log(`[VideoModal] Chunk ${chunkIndex} loaded and decrypted, size:`, decrypted.byteLength);
+
+            // Update progress
+            const loadedCount = chunks.filter(c => c !== null).length;
+            setProgress({ loaded: loadedCount, total: manifest.totalChunks });
+          } catch (err) {
+            if (!signal.aborted) {
+              console.error(`[VideoModal] Error loading chunk ${chunkIndex}:`, err);
+            }
+            throw err;
+          }
         };
-        
-        videoRef.current.onloadedmetadata = () => {
-          console.log("[VideoModal] Video metadata loaded:", videoRef.current?.videoWidth, "x", videoRef.current?.videoHeight);
-          setIsLoading(false);
-        };
-        
-        videoRef.current.oncanplay = () => {
-          console.log("[VideoModal] Video can play");
-        };
-      }
 
-      setIsLoading(false);
-      console.log("[VideoModal] loadLegacyChunks completed");
+        // Process chunks with limited concurrency
+        for (let i = 0; i < remainingIndices.length; i += concurrencyLimit) {
+          if (signal.aborted) {
+            console.log("[VideoModal] Aborted during parallel chunk loading");
+            return;
+          }
+
+          const batch = remainingIndices.slice(i, i + concurrencyLimit);
+          await Promise.all(batch.map(idx => loadChunk(idx)));
+        }
+
+        if (signal.aborted) {
+          console.log("[VideoModal] Aborted after parallel loading");
+          return;
+        }
+
+        console.log("[VideoModal] All chunks loaded, combining...");
+
+        // STEP 3: Combine all chunks and seamlessly switch to full video
+        const totalSize = chunks.reduce((sum, c) => sum + (c?.length || 0), 0);
+        console.log("[VideoModal] Total combined size:", totalSize);
+
+        const combined = new Uint8Array(totalSize);
+        let offset = 0;
+        for (const chunk of chunks) {
+          if (chunk) {
+            combined.set(chunk, offset);
+            offset += chunk.length;
+          }
+        }
+
+        // Check MP4 signature
+        if (combined.length > 8) {
+          const signature = new Uint8Array(combined.slice(4, 8));
+          const sigString = String.fromCharCode(...signature);
+          console.log("[VideoModal] MP4 signature:", sigString);
+
+          if (sigString !== 'ftyp') {
+            console.warn("[VideoModal] Warning: Expected 'ftyp' signature, got:", sigString);
+          }
+        }
+
+        console.log("[VideoModal] Creating full video blob...");
+        const fullBlob = new Blob([combined], { type: manifest.mimeType || 'video/mp4' });
+        const fullUrl = URL.createObjectURL(fullBlob);
+        console.log("[VideoModal] Full video blob URL created:", fullUrl);
+
+        // Seamlessly switch to full video
+        if (videoRef.current && !signal.aborted) {
+          const currentTime = videoRef.current.currentTime;
+          const wasPlaying = !videoRef.current.paused;
+
+          console.log("[VideoModal] Switching to full video at time:", currentTime);
+
+          // Set new source
+          videoRef.current.src = fullUrl;
+
+          // Restore playback position and state
+          videoRef.current.onloadedmetadata = () => {
+            if (videoRef.current) {
+              videoRef.current.currentTime = currentTime;
+              if (wasPlaying) {
+                videoRef.current.play().catch(() => {});
+              }
+              console.log("[VideoModal] Switched to full video successfully");
+            }
+          };
+
+          // Clean up first chunk URL
+          if (firstChunkUrl) {
+            URL.revokeObjectURL(firstChunkUrl);
+            firstChunkUrl = null;
+          }
+        }
+
+        isFullyLoaded = true;
+        console.log("[VideoModal] Progressive load completed, now using full video");
+      };
+
+      // Start loading remaining chunks in background (don't await)
+      loadRemainingChunks().catch(err => {
+        if (!signal.aborted) {
+          console.error("[VideoModal] Background chunk loading failed:", err);
+        }
+      });
+
+      console.log("[VideoModal] loadLegacyChunks initialization completed");
     } catch (err) {
       console.error("[VideoModal] loadLegacyChunks failed:", err);
       setError(err instanceof Error ? err.message : "Failed to load video");
