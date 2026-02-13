@@ -9,7 +9,7 @@ import { mkdir } from "fs/promises";
 process.env.NODE_ENV = "test";
 process.env.UPLOAD_DIR = "./data/test-uploads";
 process.env.TEMP_DIR = "./data/test-temp";
-process.env.DATABASE_URL = "file:./data/test.db";
+process.env.DATABASE_URL = "./data/test-vault.db";
 
 // Ensure test directories exist
 async function setup() {

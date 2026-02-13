@@ -8,25 +8,45 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../db/schema";
 import { mkdir } from "fs/promises";
 import { existsSync } from "fs";
+import { join } from "path";
+import { __resetDb } from "../db";
 
-const TEST_DB_PATH = "./data/test-vault.db";
+// Use process ID and counter for unique database paths per test file
+let dbCounter = 0;
+const getTestDbPath = () => {
+  const testPath = typeof expect !== 'undefined' ? expect.getState().testPath : undefined;
+  const testFileName = testPath ? testPath.split('/').pop()?.replace('.test.ts', '') : `test-${process.pid}`;
+  return `./data/test-vault-${testFileName}-${Date.now()}-${++dbCounter}.db`;
+};
 
 let testDb: ReturnType<typeof drizzle> | null = null;
 let sqlite: Database.Database | null = null;
+let currentDbPath: string | null = null;
 
 export async function setupTestDatabase() {
   // Ensure data directory exists
   await mkdir("./data", { recursive: true });
   
-  // Remove existing test DB if it exists
-  if (existsSync(TEST_DB_PATH)) {
-    const { unlink } = await import("fs/promises");
-    await unlink(TEST_DB_PATH);
+  // Reset the main db connection to ensure routes use fresh connection
+  __resetDb();
+  
+  // Close any existing test connection first
+  if (sqlite) {
+    sqlite.close();
+    sqlite = null;
+    testDb = null;
   }
   
+  // Get unique path for this test file
+  currentDbPath = getTestDbPath();
+  
+  // Update environment variable so routes use the correct DB
+  process.env.DATABASE_URL = currentDbPath;
+  
   // Create new test database
-  sqlite = new Database(TEST_DB_PATH);
+  sqlite = new Database(currentDbPath);
   sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("synchronous = NORMAL");
   
   // Create tables
   sqlite.exec(`
@@ -109,6 +129,16 @@ export async function closeTestDatabase() {
     sqlite.close();
     sqlite = null;
     testDb = null;
+  }
+  // Clean up the database file after closing
+  if (currentDbPath && existsSync(currentDbPath)) {
+    try {
+      const { unlink } = await import("fs/promises");
+      await unlink(currentDbPath);
+    } catch {
+      // Ignore cleanup errors
+    }
+    currentDbPath = null;
   }
 }
 
