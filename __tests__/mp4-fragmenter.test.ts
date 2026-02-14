@@ -12,7 +12,6 @@ class MockFileReader {
   onerror: (() => void) | null = null;
 
   readAsArrayBuffer(blob: Blob) {
-    // Convert blob to array buffer
     blob.arrayBuffer().then((buffer) => {
       this.result = buffer;
       if (this.onload) {
@@ -34,6 +33,25 @@ let readyCallback: ((info: unknown) => void) | null = null;
 let segmentCallback: ((id: number, user: unknown, buffer: ArrayBuffer, sampleNumber: number, last: boolean) => void) | null = null;
 let errorCallback: ((error: string) => void) | null = null;
 
+// Test configuration for different scenarios
+let mockConfig: {
+  videoTracks: unknown[];
+  audioTracks: unknown[];
+  duration: number;
+  timescale: number;
+  shouldError: boolean;
+  errorMessage: string;
+  mediaSegments: number;
+} = {
+  videoTracks: [{ codec: "avc1.42E01E" }],
+  audioTracks: [{ codec: "mp4a.40.2" }],
+  duration: 10000,
+  timescale: 1000,
+  shouldError: false,
+  errorMessage: "",
+  mediaSegments: 2,
+};
+
 vi.mock("mp4box", () => ({
   default: {
     createFile: () => {
@@ -48,33 +66,36 @@ vi.mock("mp4box", () => ({
           errorCallback = cb;
         },
         appendBuffer: vi.fn((buffer: ArrayBuffer) => {
-          // Simulate processing - trigger onReady on first buffer
+          if (mockConfig.shouldError && errorCallback) {
+            setTimeout(() => errorCallback!(mockConfig.errorMessage), 0);
+            return;
+          }
           if (readyCallback && buffer.byteLength > 0) {
-            // Defer to next tick to simulate async processing
             setTimeout(() => {
               readyCallback!({
-                videoTracks: [{ codec: "avc1.42E01E" }],
-                audioTracks: [{ codec: "mp4a.40.2" }],
-                duration: 10000,
-                timescale: 1000,
+                videoTracks: mockConfig.videoTracks,
+                audioTracks: mockConfig.audioTracks,
+                duration: mockConfig.duration,
+                timescale: mockConfig.timescale,
               });
             }, 0);
           }
         }),
         flush: vi.fn(() => {
-          // After flush, trigger segment callbacks
           setTimeout(() => {
-            // First segment is init segment (sampleNumber = 0)
-            if (segmentCallback) {
+            if (segmentCallback && !mockConfig.shouldError) {
               segmentCallback(1, null, new ArrayBuffer(100), 0, false);
-              // Then media segments
-              segmentCallback(1, null, new ArrayBuffer(1000), 1, false);
-              segmentCallback(1, null, new ArrayBuffer(1000), 2, true);
+              for (let i = 0; i < mockConfig.mediaSegments; i++) {
+                const isLast = i === mockConfig.mediaSegments - 1;
+                segmentCallback(1, null, new ArrayBuffer(1000), i + 1, isLast);
+              }
             }
           }, 10);
         }),
         initializeSegmentation: vi.fn(),
-        start: vi.fn(),
+        start: vi.fn((options: { segmentDuration: number }) => {
+          (global as unknown as { lastSegmentDuration: number }).lastSegmentDuration = options.segmentDuration;
+        }),
       };
       return file;
     },
@@ -94,10 +115,18 @@ import {
 describe("MP4 Fragmenter (partial)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset callback storage
     readyCallback = null;
     segmentCallback = null;
     errorCallback = null;
+    mockConfig = {
+      videoTracks: [{ codec: "avc1.42E01E" }],
+      audioTracks: [{ codec: "mp4a.40.2" }],
+      duration: 10000,
+      timescale: 1000,
+      shouldError: false,
+      errorMessage: "",
+      mediaSegments: 2,
+    };
   });
 
   afterEach(() => {
@@ -155,22 +184,11 @@ describe("MP4 Fragmenter (partial)", () => {
       expect(result.mimeType).toContain("video/mp4");
     });
 
-    it.skip("handles files with no audio tracks", async () => {
+    it("handles files with no audio tracks", async () => {
       const mockFile = new File([new ArrayBuffer(1024)], "test.mp4", { type: "video/mp4" });
       
-      mockOnReady.mockImplementation((callback) => {
-        callback({
-          videoTracks: [{ codec: "avc1.42E01E" }],
-          audioTracks: [],
-          duration: 5000,
-          timescale: 1000,
-        });
-      });
-
-      mockOnSegment.mockImplementation((callback) => {
-        callback(1, null, new ArrayBuffer(100), 0, false);
-        callback(1, null, new ArrayBuffer(150), 1, true);
-      });
+      mockConfig.audioTracks = [];
+      mockConfig.mediaSegments = 1;
 
       const result = await fragmentMP4(mockFile);
 
@@ -178,199 +196,100 @@ describe("MP4 Fragmenter (partial)", () => {
       expect(result.mimeType).toBe('video/mp4; codecs="avc1.42E01E"');
     });
 
-    it.skip("rejects files with no video or audio tracks", async () => {
+    it("rejects files with no video or audio tracks", async () => {
       const mockFile = new File([new ArrayBuffer(1024)], "test.mp4", { type: "video/mp4" });
       
-      mockOnReady.mockImplementation((callback) => {
-        callback({
-          videoTracks: [],
-          audioTracks: [],
-          duration: 0,
-          timescale: 1000,
-        });
-      });
+      mockConfig.videoTracks = [];
+      mockConfig.audioTracks = [];
+      mockConfig.mediaSegments = 0;
 
-      await expect(fragmentMP4(mockFile)).rejects.toThrow("Failed to generate init segment");
+      await expect(fragmentMP4(mockFile)).rejects.toThrow("No video or audio tracks found");
     });
 
-    it.skip("handles MP4Box errors", async () => {
+    it("handles MP4Box errors", async () => {
       const mockFile = new File([new ArrayBuffer(1024)], "test.mp4", { type: "video/mp4" });
       
-      mockOnError.mockImplementation((callback) => {
-        callback("Invalid MP4 file");
-      });
+      mockConfig.shouldError = true;
+      mockConfig.errorMessage = "Invalid MP4 file";
 
-      // Need to trigger the error somehow
       await expect(fragmentMP4(mockFile)).rejects.toThrow();
     });
 
-    it.skip("uses default segment duration of 4 seconds", async () => {
+    it("uses default segment duration of 4 seconds", async () => {
       const mockFile = new File([new ArrayBuffer(1024)], "test.mp4", { type: "video/mp4" });
-      
-      mockOnReady.mockImplementation((callback) => {
-        callback({
-          videoTracks: [{ codec: "avc1.42E01E" }],
-          audioTracks: [],
-          duration: 10000,
-          timescale: 1000,
-        });
-      });
-
-      mockOnSegment.mockImplementation((callback) => {
-        callback(1, null, new ArrayBuffer(100), 0, false);
-        callback(1, null, new ArrayBuffer(200), 1, false);
-        callback(1, null, new ArrayBuffer(200), 2, true);
-      });
 
       await fragmentMP4(mockFile);
 
-      expect(mockStart).toHaveBeenCalledWith(expect.objectContaining({
-        segmentDuration: 4000,
-      }));
+      expect((global as unknown as { lastSegmentDuration: number }).lastSegmentDuration).toBe(4000);
     });
 
-    it.skip("accepts custom segment duration", async () => {
+    it("accepts custom segment duration", async () => {
       const mockFile = new File([new ArrayBuffer(1024)], "test.mp4", { type: "video/mp4" });
-      
-      mockOnReady.mockImplementation((callback) => {
-        callback({
-          videoTracks: [{ codec: "avc1.42E01E" }],
-          audioTracks: [],
-          duration: 10000,
-          timescale: 1000,
-        });
-      });
-
-      mockOnSegment.mockImplementation((callback) => {
-        callback(1, null, new ArrayBuffer(100), 0, false);
-        callback(1, null, new ArrayBuffer(200), 1, true);
-      });
 
       await fragmentMP4(mockFile, { segmentDurationMs: 6000 });
 
-      expect(mockStart).toHaveBeenCalledWith(expect.objectContaining({
-        segmentDuration: 6000,
-      }));
+      expect((global as unknown as { lastSegmentDuration: number }).lastSegmentDuration).toBe(6000);
     });
 
-    it.skip("clamps segment duration to minimum 2 seconds", async () => {
+    it("clamps segment duration to minimum 2 seconds", async () => {
       const mockFile = new File([new ArrayBuffer(1024)], "test.mp4", { type: "video/mp4" });
-      
-      mockOnReady.mockImplementation((callback) => {
-        callback({
-          videoTracks: [{ codec: "avc1.42E01E" }],
-          audioTracks: [],
-          duration: 10000,
-          timescale: 1000,
-        });
-      });
 
-      mockOnSegment.mockImplementation((callback) => {
-        callback(1, null, new ArrayBuffer(100), 0, false);
-        callback(1, null, new ArrayBuffer(200), 1, true);
-      });
+      await fragmentMP4(mockFile, { segmentDurationMs: 1000 });
 
-      await fragmentMP4(mockFile, { segmentDurationMs: 1000 }); // Try to set 1 second
-
-      expect(mockStart).toHaveBeenCalledWith(expect.objectContaining({
-        segmentDuration: 2000, // Should be clamped to 2 seconds
-      }));
+      expect((global as unknown as { lastSegmentDuration: number }).lastSegmentDuration).toBe(2000);
     });
 
-    it.skip("clamps segment duration to maximum 10 seconds", async () => {
+    it("clamps segment duration to maximum 10 seconds", async () => {
       const mockFile = new File([new ArrayBuffer(1024)], "test.mp4", { type: "video/mp4" });
-      
-      mockOnReady.mockImplementation((callback) => {
-        callback({
-          videoTracks: [{ codec: "avc1.42E01E" }],
-          audioTracks: [],
-          duration: 60000,
-          timescale: 1000,
-        });
-      });
 
-      mockOnSegment.mockImplementation((callback) => {
-        callback(1, null, new ArrayBuffer(100), 0, false);
-        callback(1, null, new ArrayBuffer(200), 1, true);
-      });
+      await fragmentMP4(mockFile, { segmentDurationMs: 15000 });
 
-      await fragmentMP4(mockFile, { segmentDurationMs: 15000 }); // Try to set 15 seconds
-
-      expect(mockStart).toHaveBeenCalledWith(expect.objectContaining({
-        segmentDuration: 10000, // Should be clamped to 10 seconds
-      }));
+      expect((global as unknown as { lastSegmentDuration: number }).lastSegmentDuration).toBe(10000);
     });
 
-    it.skip("reports progress via onProgress callback", async () => {
+    it("reports progress via onProgress callback", async () => {
       const mockFile = new File([new ArrayBuffer(1024)], "test.mp4", { type: "video/mp4" });
       const onProgress = vi.fn();
-      
-      mockOnReady.mockImplementation((callback) => {
-        callback({
-          videoTracks: [{ codec: "avc1.42E01E" }],
-          audioTracks: [],
-          duration: 12000,
-          timescale: 1000,
-        });
-      });
-
-      mockOnSegment.mockImplementation((callback) => {
-        callback(1, null, new ArrayBuffer(100), 0, false); // init
-        callback(1, null, new ArrayBuffer(200), 1, false); // media 1
-        callback(1, null, new ArrayBuffer(200), 2, false); // media 2
-        callback(1, null, new ArrayBuffer(200), 3, true);  // media 3
-      });
 
       await fragmentMP4(mockFile, { onProgress });
 
       expect(onProgress).toHaveBeenCalled();
     });
 
-    it.skip("calculates total duration correctly", async () => {
+    it("calculates total duration correctly", async () => {
       const mockFile = new File([new ArrayBuffer(1024)], "test.mp4", { type: "video/mp4" });
       
-      mockOnReady.mockImplementation((callback) => {
-        callback({
-          videoTracks: [{ codec: "avc1.42E01E" }],
-          audioTracks: [],
-          duration: 15000, // 15 seconds in timescale units
-          timescale: 1000, // 1000 units = 1 second
-        });
-      });
-
-      mockOnSegment.mockImplementation((callback) => {
-        callback(1, null, new ArrayBuffer(100), 0, false);
-        callback(1, null, new ArrayBuffer(200), 1, true);
-      });
+      mockConfig.duration = 15000;
+      mockConfig.timescale = 1000;
 
       const result = await fragmentMP4(mockFile);
 
-      expect(result.totalDuration).toBe(15000); // 15 seconds in ms
+      expect(result.totalDuration).toBe(15000);
     });
   });
 
   describe("createLegacyChunks()", () => {
     it("creates chunks from file", async () => {
-      const content = new Uint8Array(1024 * 10); // 10KB file
+      const content = new Uint8Array(1024 * 10);
       const mockFile = new File([content], "test.mp4", { type: "video/mp4" });
 
-      const result = await createLegacyChunks(mockFile, 1024 * 3); // 3KB chunks
+      const result = await createLegacyChunks(mockFile, 1024 * 3);
 
-      expect(result.chunks).toHaveLength(4); // 10KB / 3KB = 4 chunks (3 + 3 + 3 + 1)
+      expect(result.chunks).toHaveLength(4);
       expect(result.totalChunks).toBe(4);
     });
 
     it("uses default chunk size of 8MB", async () => {
-      const content = new Uint8Array(1024 * 1024 * 20); // 20MB file
+      const content = new Uint8Array(1024 * 1024 * 20);
       const mockFile = new File([content], "test.mp4", { type: "video/mp4" });
 
       const result = await createLegacyChunks(mockFile);
 
-      expect(result.totalChunks).toBe(3); // 20MB / 8MB = 3 chunks (8 + 8 + 4)
+      expect(result.totalChunks).toBe(3);
     });
 
     it("creates single chunk for small files", async () => {
-      const content = new Uint8Array(1024); // 1KB file
+      const content = new Uint8Array(1024);
       const mockFile = new File([content], "test.mp4", { type: "video/mp4" });
 
       const result = await createLegacyChunks(mockFile, 1024 * 8);
@@ -416,7 +335,7 @@ describe("MP4 Fragmenter (partial)", () => {
     });
 
     it("suggests fMP4 even for small MP4 files", async () => {
-      const content = new Uint8Array(1024 * 1024 * 5); // 5MB
+      const content = new Uint8Array(1024 * 1024 * 5);
       const file = new File([content], "small.mp4", { type: "video/mp4" });
       
       const result = await getFragmentationStrategy(file);
@@ -426,7 +345,7 @@ describe("MP4 Fragmenter (partial)", () => {
     });
 
     it("suggests fMP4 for large MP4 files", async () => {
-      const content = new Uint8Array(1024 * 1024 * 100); // 100MB
+      const content = new Uint8Array(1024 * 1024 * 100);
       const file = new File([content], "large.mp4", { type: "video/mp4" });
       
       const result = await getFragmentationStrategy(file);
@@ -454,56 +373,24 @@ describe("MP4 Fragmenter (partial)", () => {
   });
 
   describe("Segment output structure", () => {
-    it.skip("returns init segment separately from media segments", async () => {
+    it("returns init segment separately from media segments", async () => {
       const mockFile = new File([new ArrayBuffer(1024)], "test.mp4", { type: "video/mp4" });
       
-      mockOnReady.mockImplementation((callback) => {
-        callback({
-          videoTracks: [{ codec: "avc1.42E01E" }],
-          audioTracks: [],
-          duration: 8000,
-          timescale: 1000,
-        });
-      });
-
-      // Simulate init segment first, then media segments
-      let callCount = 0;
-      mockOnSegment.mockImplementation((callback) => {
-        if (callCount === 0) {
-          callback(1, null, new ArrayBuffer(100), 0, false); // Init segment (sampleNumber = 0)
-        } else {
-          callback(1, null, new ArrayBuffer(200), callCount, callCount === 2); // Media segments
-        }
-        callCount++;
-      });
+      mockConfig.duration = 8000;
+      mockConfig.mediaSegments = 2;
 
       const result = await fragmentMP4(mockFile);
 
-      // Init segment should be separate
       expect(result.initSegment).toBeDefined();
       expect(result.initSegment.byteLength).toBe(100);
-      
-      // Media segments should be in array
       expect(result.mediaSegments).toHaveLength(2);
     });
 
-    it.skip("provides segment durations in milliseconds", async () => {
+    it("provides segment durations in milliseconds", async () => {
       const mockFile = new File([new ArrayBuffer(1024)], "test.mp4", { type: "video/mp4" });
       
-      mockOnReady.mockImplementation((callback) => {
-        callback({
-          videoTracks: [{ codec: "avc1.42E01E" }],
-          audioTracks: [],
-          duration: 12000,
-          timescale: 1000,
-        });
-      });
-
-      mockOnSegment.mockImplementation((callback) => {
-        callback(1, null, new ArrayBuffer(100), 0, false); // init
-        callback(1, null, new ArrayBuffer(200), 1, false);
-        callback(1, null, new ArrayBuffer(200), 2, true);
-      });
+      mockConfig.duration = 12000;
+      mockConfig.mediaSegments = 2;
 
       const result = await fragmentMP4(mockFile);
 
