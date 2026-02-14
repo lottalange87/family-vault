@@ -9,6 +9,8 @@ import { join } from "path";
 
 // Set test database URL BEFORE importing any routes
 process.env.DATABASE_URL = "./data/test-vault.db";
+process.env.UPLOAD_DIR = "./data/test-uploads";
+process.env.TEMP_DIR = "./data/test-temp";
 
 // Now import routes (they'll use the test DB)
 import {
@@ -37,8 +39,8 @@ async function createTestChunkFile(fileId: string, index: number, content: Buffe
 }
 
 async function createTestSegmentFile(videoId: string, index: number, content: Buffer) {
-  // fMP4 route expects files at {cwd}/uploads/{videoId}/segments/
-  const segmentDir = join(process.cwd(), "uploads", videoId, "segments");
+  // fMP4 route expects files at UPLOAD_DIR/{videoId}/segments/
+  const segmentDir = join(UPLOAD_DIR, videoId, "segments");
   await mkdir(segmentDir, { recursive: true });
   const path = join(segmentDir, `segment-${index}.enc`);
   await writeFile(path, content);
@@ -48,14 +50,8 @@ async function createTestSegmentFile(videoId: string, index: number, content: Bu
 // Helper to clean up test files
 async function cleanupTestFiles(fileId: string) {
   try {
-    // Clean up data/uploads (for chunk tests)
+    // Clean up UPLOAD_DIR (for both chunk and fMP4 tests)
     await rm(join(UPLOAD_DIR, fileId), { recursive: true, force: true });
-  } catch {
-    // Ignore cleanup errors
-  }
-  try {
-    // Clean up uploads/ (for fMP4 tests)
-    await rm(join(process.cwd(), "uploads", fileId), { recursive: true, force: true });
   } catch {
     // Ignore cleanup errors
   }

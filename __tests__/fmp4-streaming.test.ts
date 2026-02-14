@@ -39,8 +39,8 @@ function decryptSegment(encrypted: Buffer): string {
 }
 
 async function createSegmentOnDisk(videoId: string, index: number, content: Buffer) {
-  // fMP4 routes expect files at {cwd}/uploads/{videoId}/segments/
-  const segmentDir = join(process.cwd(), "uploads", videoId, "segments");
+  // fMP4 routes expect files at UPLOAD_DIR/{videoId}/segments/
+  const segmentDir = join(UPLOAD_DIR, videoId, "segments");
   await mkdir(segmentDir, { recursive: true });
   const path = join(segmentDir, `segment-${index}.enc`);
   await writeFile(path, content);
@@ -49,11 +49,7 @@ async function createSegmentOnDisk(videoId: string, index: number, content: Buff
 
 async function cleanupTestFiles(videoId: string) {
   try {
-    await rm(join(process.cwd(), "uploads", videoId), { recursive: true, force: true });
-  } catch {
-    // Ignore
-  }
-  try {
+    // Clean up UPLOAD_DIR for fMP4 tests
     await rm(join(UPLOAD_DIR, videoId), { recursive: true, force: true });
   } catch {
     // Ignore
@@ -91,7 +87,7 @@ describe("fMP4 Streaming Integration", () => {
       }
     });
 
-    it.skip("complete flow: init → upload segments → complete → stream", async () => {
+    it("complete flow: init → upload segments → complete → stream", async () => {
       const { POST: initUpload } = await import("../app/api/upload/init/route");
       const { POST: uploadSegment } = await import("../app/api/upload/segment/route");
       const { POST: completeUpload } = await import("../app/api/upload/complete/route");

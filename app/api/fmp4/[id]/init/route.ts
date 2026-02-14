@@ -5,6 +5,8 @@ import { eq, and } from "drizzle-orm";
 import { readFile } from "fs/promises";
 import { join } from "path";
 
+const UPLOAD_DIR = process.env.UPLOAD_DIR || "./data/uploads";
+
 // GET /api/fmp4/[id]/init - Get encrypted fMP4 init segment
 export async function GET(
   request: NextRequest,
@@ -31,7 +33,7 @@ export async function GET(
 
     // Read encrypted init segment file
     const encryptedData = await readFile(
-      join(process.cwd(), "uploads", initSegment.segmentPath)
+      join(UPLOAD_DIR, initSegment.segmentPath)
     );
 
     // Return encrypted init segment
