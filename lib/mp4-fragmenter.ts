@@ -9,7 +9,7 @@
  * - Memory-efficient streaming processing
  */
 
-import MP4Box from "mp4box";
+import * as MP4Box from "mp4box";
 
 export interface Segment {
   index: number;
